@@ -1,2 +1,2 @@
-# honister
-Python-based instruction generator for RISCV
+# tibbar
+Python-based instruction stream generator for RISCV
