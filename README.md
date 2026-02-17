@@ -1,2 +1,58 @@
-# tibbar
-Python-based instruction stream generator for RISCV
+# Tibbar
+
+Python-based RISC-V instruction stream generator. Tibbar produces assembly test programs (`.S` files) with a boot address, exit region, and instruction sequences suitable for simulation or verification.
+
+You must choose a **generator** (test suite) when running Tibbar. See [docs/](docs/) for how generators, sequences, and output work.
+
+---
+
+## Quick start
+
+From the project root (with [uv](https://docs.astral.sh/uv/) or your environment with dependencies installed):
+
+```bash
+uv sync
+uv run tibbar --generator simple --output test.S
+```
+
+Or run as a module:
+
+```bash
+uv run python -m tibbar --generator simple --output test.S
+```
+
+This writes `test.S` with RISC-V assembly. Use `# Boot:` and `# Exit:` in the file to know where execution starts and where the test expects to exit.
+
+---
+
+## Generators
+
+You must pass `--generator` / `-g` with one of these built-in suite names:
+
+| Generator        | Description                                              |
+|------------------|----------------------------------------------------------|
+| `simple`         | Random safe integer instructions and relative branching  |
+| `ldst`           | Load/store-heavy sequences                               |
+| `rel_branching`  | Short instruction bursts and branches                    |
+| `float`          | Float-oriented: RandomFloatInstrs + relative branching     |
+| `stress_float`   | Stress float: safe integer sequences (float stress in funnel) |
+| `hazard`         | Hazard-focused: SetGPRs, Hazards, Load/Store, RandomSafeInstrs |
+| `ldst_exception` | Load/store with faults: LoadException + Store + branching |
+
+Example with a different generator and options:
+
+```bash
+uv run tibbar --generator ldst --output ldst.S --seed 1 --debug-yaml ldst_debug.yaml
+```
+
+---
+
+## Documentation
+
+- **[docs/](docs/)** — How Tibbar works: overview, generators, sequences, and full CLI reference.
+
+---
+
+## Credits
+
+Tibbar was originally developed at Vypercore. When the company closed, Ed Nutting generously released redacted parts of the original code for open-source use. I'm very grateful for this contribution, which made the Tibbar project possible.

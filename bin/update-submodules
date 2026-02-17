@@ -1,0 +1,6 @@
+#!/bin/zsh
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Stuart Alldred. All Rights Reserved
+
+ROOT=$(readlink -f ${0:a:h}/..)
+git -C "$ROOT" submodule update --init --remote
