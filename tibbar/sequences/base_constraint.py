@@ -5,10 +5,14 @@
 
 from constraint import Problem
 
+from .base import SequenceBase
 
-class BaseConstraint:
+
+class BaseConstraint(SequenceBase):
+    """Constraint-based sequences; subclasses SequenceBase for reservation stub."""
+
     def __init__(self, tibbar: object) -> None:
-        self.tibbar = tibbar
+        super().__init__(tibbar)
         self.random = self.tibbar.random
         self.reset_problem()
 
