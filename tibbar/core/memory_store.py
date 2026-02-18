@@ -1,0 +1,252 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Stuart Alldred.
+
+"""Linear byte-addressed memory store for the ISG."""
+
+from __future__ import annotations
+
+import logging
+import random
+from typing import TYPE_CHECKING
+
+from tibbar.utils import MASK_64_BIT
+
+if TYPE_CHECKING:
+    from tibbar.testobj import GenData
+
+
+class MemoryStore:
+    """Linear byte-addressed memory for instruction/data placement."""
+
+    def __init__(
+        self,
+        log: logging.Logger,
+        rng: random.Random,
+        seed: int,
+        max_size: int,
+    ) -> None:
+        self.random = rng
+        self.seed = seed
+        self._max_size = max_size
+        self._gen_store: dict[int, GenData] = {}
+        self._live_memory: dict[int, int] = {}
+        self._used_ranges: list[tuple[int, int]] = []
+        self._data_region_base: int | None = None
+        self._data_region_size: int = 0
+        self._data_next: int = 0
+        self.debug = log.debug
+        self.info = log.info
+        self.warning = log.warning
+        self.error = log.error
+
+    def get_memory_size(self) -> int:
+        return self._max_size
+
+    def _normalize_pc(self, pc: int | object) -> int:
+        if isinstance(pc, int):
+            return pc
+        return getattr(pc, "address", pc)
+
+    def _insert_used_range(self, start: int, end: int) -> None:
+        if start >= end:
+            return
+        self._used_ranges.append((start, end))
+        self._used_ranges.sort(key=lambda r: r[0])
+        merged: list[tuple[int, int]] = []
+        for s, e in self._used_ranges:
+            if merged and s <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+            else:
+                merged.append((s, e))
+        self._used_ranges = merged
+
+    def check_region_empty(self, addr: int, byte_size: int) -> bool:
+        """True iff [addr, addr+byte_size) does not overlap any existing _gen_store item."""
+        if addr < 0 or byte_size <= 0 or addr + byte_size > self._max_size:
+            return False
+        end = addr + byte_size
+        for s, item in self._gen_store.items():
+            item_size = getattr(item, "byte_size", 4)
+            e = s + item_size
+            if not (end <= s or addr >= e):
+                return False
+        return True
+
+    def find_space(
+        self,
+        pc: int | object,
+        min_size: int,
+        align: int = 8,
+        within: tuple[int, int] | None = None,
+    ) -> int | None:
+        pc_addr = self._normalize_pc(pc)
+        gaps: list[tuple[int, int]] = []
+        prev_end = 0
+        for s, e in self._used_ranges:
+            if s > prev_end:
+                gaps.append((prev_end, s))
+            prev_end = max(prev_end, e)
+        if prev_end < self._max_size:
+            gaps.append((prev_end, self._max_size))
+
+        candidates: list[int] = []
+        for gap_start, gap_end in gaps:
+            if gap_end - gap_start < min_size:
+                continue
+            aligned_start = (gap_start + align - 1) & -align
+            if aligned_start + min_size <= gap_end:
+                if within is not None:
+                    min_off, max_off = within
+                    lo = max(aligned_start, pc_addr + min_off)
+                    hi = min(gap_end - min_size, pc_addr + max_off)
+                    if lo <= hi:
+                        cand = (lo + align - 1) & -align
+                        if cand + min_size <= gap_end and cand <= hi:
+                            candidates.append(cand)
+                else:
+                    candidates.append(aligned_start)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda a: abs(a - pc_addr))
+        return candidates[0]
+
+    def get_free_space(self, pc: int | object) -> int:
+        pc_addr = self._normalize_pc(pc)
+        if pc_addr >= self._max_size:
+            return 0
+        for s, e in self._used_ranges:
+            if s > pc_addr:
+                return s - pc_addr
+            if e > pc_addr:
+                return 0
+        return self._max_size - pc_addr
+
+    def compact_and_return(self) -> dict[int, object]:
+        output: dict[int, object] = {}
+        for addr, item in self._gen_store.items():
+            output[addr] = item.export_to_tibbar_item()
+        return output
+
+    def read_from_mem_store(self, addr: int, size: int = 8) -> int:
+        assert 0 <= addr < self._max_size, f"Address out of range: {addr=}"
+        assert addr + size <= self._max_size, f"Access past end: {addr}+{size}"
+        assert size <= 8, f"Not expecting size over 8 bytes: {size=}"
+        dword = 0
+        for byte in range(size):
+            byte_data = self._live_memory.get(addr + byte, 0)
+            dword |= byte_data << (8 * byte)
+        return dword
+
+    def is_memory_populated(self, addr: int | object) -> bool:
+        a = self._normalize_pc(addr) if not isinstance(addr, int) else addr
+        return a in self._live_memory
+
+    def write_to_mem_store(
+        self,
+        addr: int,
+        data: int,
+        strobe: int = MASK_64_BIT,
+    ) -> None:
+        assert 0 <= addr < self._max_size, f"Address out of range: {addr=}"
+        for i in range(8):
+            if (strobe >> (i * 8)) & 0xFF:
+                self._live_memory[addr + i] = (data >> (8 * i)) & 0xFF
+
+    def add_to_mem_store(self, test_obj: GenData) -> None:
+        from tibbar.testobj import GenData
+
+        addr = test_obj.addr
+        if addr is None:
+            raise ValueError("GenData.addr must be set before add_to_mem_store")
+        if not isinstance(addr, int):
+            addr = getattr(addr, "address", addr)
+
+        self.debug(f"Adding to mem_store: 0x{addr:x}: {test_obj}")
+
+        if test_obj.ldst_data is not None:
+            ldst_addr = test_obj.ldst_addr
+            if ldst_addr is None:
+                raise ValueError("ldst_addr required when ldst_data is set")
+            if not isinstance(ldst_addr, int):
+                ldst_addr = getattr(ldst_addr, "address", ldst_addr)
+            self.add_to_mem_store(
+                GenData(
+                    seq=test_obj.seq,
+                    addr=ldst_addr,
+                    data=test_obj.ldst_data,
+                    byte_size=test_obj.ldst_size,
+                    comment=(
+                        f"Load data for instruction at 0x{addr:x} "
+                        f"(data=0x{test_obj.ldst_data:_x}, size={test_obj.ldst_size})"
+                    ),
+                    is_data=True,
+                )
+            )
+
+        memory_empty = self.check_region_empty(addr, test_obj.byte_size)
+        assert memory_empty, f"0x{addr:x} is already in use"
+
+        self._gen_store[addr] = test_obj
+        self._insert_used_range(addr, addr + test_obj.byte_size)
+
+        match test_obj.byte_size:
+            case 1:
+                strobe = 0xFF
+            case 2:
+                strobe = 0xFFFF
+            case 4:
+                strobe = 0xFFFF_FFFF
+            case 8:
+                strobe = MASK_64_BIT
+            case _:
+                raise ValueError(f"Unsupported datasize: {test_obj.byte_size}")
+        self.write_to_mem_store(addr, test_obj.data or 0, strobe)
+
+    def allocate_region(self, size: int, align: int = 8) -> int | None:
+        """Find a free block, mark it used, return base. Caller adds data via add_to_mem_store."""
+        base = self.find_space(0, min_size=size, align=align)
+        if base is None:
+            return None
+        self._insert_used_range(base, base + size)
+        return base
+
+    def reserve_data_region(self, size: int, align: int = 8) -> None:
+        """Reserve a contiguous region at end of memory for loadable data. Call once at init."""
+        if self._data_region_base is not None:
+            return
+        base = (self._max_size - size) & -align
+        if base < 0:
+            raise AssertionError("No space for data region")
+        self._data_region_base = base
+        self._data_region_size = size
+        self._data_next = base
+        self._insert_used_range(base, base + size)
+
+    def get_data_region_base(self) -> int | None:
+        """Return the start of the reserved data region, or None if not reserved."""
+        return self._data_region_base
+
+    def allocate_data_region(self, size: int, align: int = 8) -> int | None:
+        """Allocate from the reserved data region. Returns base address or None if full."""
+        if self._data_region_base is None:
+            self.reserve_data_region(256 * 1024, align=align)
+        assert self._data_region_base is not None
+        addr = (self._data_next + align - 1) & -align
+        end = addr + size
+        if end > self._data_region_base + self._data_region_size:
+            return None
+        self._data_next = end
+        return addr
+
+    def get_handle(self, pc: int | object, size: int) -> int:
+        """Find space for a region and reserve it."""
+        pc_addr = self._normalize_pc(pc)
+        base = self.find_space(pc_addr, min_size=size, align=8)
+        if base is not None:
+            self._insert_used_range(base, base + size)
+            return base
+        base = self.find_space(0, min_size=size, align=8)
+        if base is not None:
+            self._insert_used_range(base, base + size)
+            return base
+        raise AssertionError("No space left for allocation")

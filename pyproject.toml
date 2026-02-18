@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tibbar"
+version = "0.1.0"
+description = "RISCV Instruction Stream Generator"
+readme = "README.md"
+license = "MIT"
+dependencies = [
+    "eumos",
+    "lome",
+    "python-constraint",
+    "pre-commit",
+    "pykwalify",
+    "PyYAML",
+]
+authors = [
+    { name = "Stuart Alldred", email = "stuartalldred@gmail.com" }
+]
+requires-python = ">= 3.13"
+
+[project.scripts]
+tibbar = "tibbar.__main__:main"
+
+[tool.uv.sources]
+eumos = { workspace = true }
+lome = { workspace = true }
+
+[tool.uv.workspace]
+members = ["vendor/eumos", "vendor/lome"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["tibbar", "sequences"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]
+
+[tool.setuptools]
+include-package-data = true
+packages = ["tibbar"]
+
+[tool.black]
+line-length = 100
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.flake8]
+max-line-length = 100

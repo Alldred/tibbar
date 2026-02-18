@@ -1,0 +1,23 @@
+#!/bin/zsh
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2025 Stuart Alldred. All Rights Reserved
+
+# Check for TIBBAR_ROOT already being set in the shell
+if [[ "$TIBBAR_ROOT" != "" ]]; then
+    echo "[\033[0;31mERROR\033[0m] Tibbar shell is already activated!"
+    exit 1
+fi
+
+# Work out where the repository is located
+TIBBAR_ROOT=$(readlink -f ${0:a:h}/..)
+if [[ -d "$TIBBAR_ROOT/.git" ]]; then
+    echo "[INFO] Updating git submodules..."
+    git -C "$TIBBAR_ROOT" submodule update --init
+fi
+
+USER_HISTFILE=${HISTFILE:-$HOME/.zsh_history}
+
+TIBBAR_ROOT=$TIBBAR_ROOT \
+    USER_HISTFILE=$USER_HISTFILE \
+    ZDOTDIR=$TIBBAR_ROOT/bin/zsh \
+    /bin/zsh -i $@
