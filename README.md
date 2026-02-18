@@ -55,4 +55,4 @@ uv run tibbar --generator ldst --output ldst.S --seed 1 --debug-yaml ldst_debug.
 
 ## Credits
 
-Tibbar was originally developed at Vypercore. When the company closed, Ed Nutting generously released redacted parts of the original code for open-source use. I'm very grateful for this contribution, which made the Tibbar project possible.
+Tibbar was originally developed at Vypercore as 'Honister'. When the company closed, Ed Nutting generously released redacted parts of the original code for open-source use. I'm very grateful for this contribution, which made the Tibbar project possible.
