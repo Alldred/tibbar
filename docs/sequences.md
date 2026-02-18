@@ -38,6 +38,6 @@ Each built-in generator wires these (and possibly others) into a **start_sequenc
 A **funnel** combines several sequences into one stream:
 
 - **SimpleFunnel** — Runs the first sequence to completion, then the second, then the third, and so on.
-- **RoundRobinFunnel** — Round-robins between sequences until they are all exhausted.
+- **RoundRobinFunnel** — Round-robins between sequences (one item per producer per round) until they are all exhausted. Optional **resource reservation** lets sequences declare which registers they use so interleaving is safe; see [RESERVER.md](RESERVER.md).
 
 The base generator used internally (e.g. `GeneratorBase` in `tibbar.core.generator_base`) uses a `SimpleFunnel` for the main body; the named test suites (e.g. `simple`, `ldst`) subclass it and add different sequences to that funnel. See the `tibbar.test_suites` and `tibbar.sequences` packages for the actual definitions.
