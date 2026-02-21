@@ -184,7 +184,8 @@ class DefaultProgramStart:
         if mepc_addr is None or mtvec_addr is None:
             raise RuntimeError("Eumos/Lome missing mepc or mtvec CSR")
 
-        exception_base = self.tibbar.mem_store.allocate_region(40)
+        # Avoid 0 so boot can be at 0 (exit region already uses min_start=0x100).
+        exception_base = self.tibbar.mem_store.allocate_region(40, min_start=0x100)
         assert exception_base is not None, "No space for exception handler"
         self.tibbar.exception_address = exception_base
 

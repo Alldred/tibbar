@@ -1,0 +1,67 @@
+#!/bin/zsh
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Stuart Alldred. All Rights Reserved
+#
+# Install RISC-V GNU toolchain so that riscv64-unknown-elf-as and ld are
+# available. Idempotent: skips if toolchain is already present.
+# Sets up project-local tools/riscv or uses Homebrew (macOS) / system package (Linux).
+
+set -e
+ROOT=$(readlink -f "${0:a:h}/..")
+TOOLS="$ROOT/tools/riscv"
+BIN="$TOOLS/bin"
+AS_NAME="riscv64-unknown-elf-as"
+
+# Already available on PATH
+if command -v "$AS_NAME" &>/dev/null; then
+    echo "[INFO] RISC-V toolchain already available: $(command -v $AS_NAME)"
+    exit 0
+fi
+
+# Project-local toolchain already installed
+if [[ -x "$BIN/$AS_NAME" ]]; then
+    echo "[INFO] RISC-V toolchain already installed at $BIN"
+    exit 0
+fi
+
+echo "[INFO] RISC-V toolchain not found. Installing..."
+
+case "$(uname -s)" in
+    Darwin)
+        if ! command -v brew &>/dev/null; then
+            echo "[ERROR] Homebrew not found. Install from https://brew.sh or install toolchain manually."
+            exit 1
+        fi
+        # Tap may be required for riscv-gnu-toolchain
+        brew tap riscv/riscv 2>/dev/null || true
+        brew install riscv-gnu-toolchain
+        # Ensure Homebrew bin is on PATH for verification (and for current shell)
+        export PATH="$(brew --prefix)/bin:$PATH"
+        echo "[INFO] Installed via Homebrew. Use ./bin/shell so PATH includes the toolchain."
+        ;;
+    Linux)
+        if command -v apt-get &>/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y gcc-riscv64-unknown-elf
+            echo "[INFO] Installed via apt. Toolchain should be on PATH."
+        elif command -v dnf &>/dev/null; then
+            sudo dnf install -y riscv64-elf-gcc
+            echo "[INFO] Installed via dnf. Toolchain should be on PATH."
+        else
+            echo "[ERROR] Unsupported Linux package manager. Install riscv64-unknown-elf-gcc manually or use a prebuilt tarball in tools/riscv."
+            exit 1
+        fi
+        ;;
+    *)
+        echo "[ERROR] Unsupported OS: $(uname -s). Install RISC-V GNU toolchain manually and ensure riscv64-unknown-elf-as is on PATH."
+        exit 1
+        ;;
+esac
+
+# Verify
+if command -v "$AS_NAME" &>/dev/null; then
+    echo "[INFO] OK: $AS_NAME found at $(command -v $AS_NAME)"
+else
+    echo "[WARN] $AS_NAME not in PATH yet. Run ./bin/shell (which adds Homebrew paths on macOS) or add the toolchain bin directory to PATH."
+    exit 1
+fi

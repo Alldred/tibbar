@@ -1,0 +1,12 @@
+# Single RAM: matches scripts/riscv_bare.ld (one bank for code and data).
+# data_reserve: bytes reserved at end for data (default 262144 if omitted).
+# boot: 0-based offset for execution start; omit for random boot address. Use boot: 0 for _start at image base.
+memory:
+  banks:
+    - name: RAM
+      base: 0x80000000
+      size: 0x80000
+      code: true
+      data: true
+      access: rwx
+  data_reserve: 262144

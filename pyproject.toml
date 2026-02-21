@@ -10,6 +10,7 @@ readme = "README.md"
 license = "MIT"
 dependencies = [
     "eumos",
+    "jsonschema",
     "lome",
     "python-constraint",
     "pre-commit",
@@ -52,6 +53,9 @@ exclude_lines = [
 [tool.setuptools]
 include-package-data = true
 packages = ["tibbar"]
+
+[tool.setuptools.package-data]
+tibbar = ["config/*.yaml", "config/*.json"]
 
 [tool.black]
 line-length = 100
