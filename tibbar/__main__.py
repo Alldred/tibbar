@@ -54,6 +54,13 @@ def main() -> None:
         metavar="FILE",
         help="Optional: write debug YAML to FILE",
     )
+    parser.add_argument(
+        "--memory-config",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Memory layout YAML (banks, code/data, base, size). Default: built-in config.",
+    )
     args = parser.parse_args()
 
     if args.generator is None:
@@ -75,6 +82,7 @@ def main() -> None:
         seed=args.seed,
         output=args.output,
         verbosity=args.verbosity,
+        memory_config=args.memory_config,
     )
     tibbar.run()
     if args.debug_yaml is not None:

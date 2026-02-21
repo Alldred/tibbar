@@ -1,6 +1,6 @@
 # Generators
 
-A **generator** is a test suite: it defines which **sequences** run and in what order (via a funnel). When you run Tibbar, you pick one generator with `--generator` / `-g`.
+A **generator** is a test suite: it defines which **sequences** run and in what order (via a funnel). When you run Tibbar, you pick one generator with `--generator` / `-g`. Each run randomises the **boot** and **exit** addresses (exit is never 0); the output file header lists them as `# Boot:` and `# Exit:`.
 
 ## Built-in generators
 

@@ -15,6 +15,11 @@ if TYPE_CHECKING:
     from tibbar.testobj import GenData
 
 
+# When using a separate data bank, data addresses live above this offset
+# so they don't collide with code; ASM emit subtracts this for the .data section VMA.
+DATA_VMA_OFFSET = 0x1_0000_0000
+
+
 class MemoryStore:
     """Linear byte-addressed memory for instruction/data placement."""
 
@@ -24,6 +29,8 @@ class MemoryStore:
         rng: random.Random,
         seed: int,
         max_size: int,
+        *,
+        separate_data_region_size: int | None = None,
     ) -> None:
         self.random = rng
         self.seed = seed
@@ -34,6 +41,8 @@ class MemoryStore:
         self._data_region_base: int | None = None
         self._data_region_size: int = 0
         self._data_next: int = 0
+        self._separate_data_region = separate_data_region_size is not None
+        self._data_vma_offset = DATA_VMA_OFFSET if separate_data_region_size else 0
         self.debug = log.debug
         self.info = log.info
         self.warning = log.warning
@@ -78,6 +87,7 @@ class MemoryStore:
         min_size: int,
         align: int = 8,
         within: tuple[int, int] | None = None,
+        min_start: int | None = None,
     ) -> int | None:
         pc_addr = self._normalize_pc(pc)
         gaps: list[tuple[int, int]] = []
@@ -94,8 +104,8 @@ class MemoryStore:
             if gap_end - gap_start < min_size:
                 continue
             aligned_start = (gap_start + align - 1) & -align
-            if aligned_start + min_size <= gap_end:
-                if within is not None:
+            if within is not None:
+                if aligned_start + min_size <= gap_end:
                     min_off, max_off = within
                     lo = max(aligned_start, pc_addr + min_off)
                     hi = min(gap_end - min_size, pc_addr + max_off)
@@ -103,8 +113,22 @@ class MemoryStore:
                         cand = (lo + align - 1) & -align
                         if cand + min_size <= gap_end and cand <= hi:
                             candidates.append(cand)
-                else:
-                    candidates.append(aligned_start)
+            else:
+                # First valid address in this gap (respect min_start so we don't pick 0)
+                start_cand = aligned_start
+                if min_start is not None and aligned_start < min_start:
+                    start_cand = (min_start + align - 1) & -align
+                if start_cand + min_size <= gap_end:
+                    candidates.append(start_cand)
+                    # Also add address near pc_addr so caller can randomise (e.g. exit region)
+                    hi = gap_end - min_size
+                    if hi > start_cand:
+                        near = max(start_cand, min(hi, pc_addr))
+                        near = (near + align - 1) & -align
+                        if start_cand <= near <= hi and near not in candidates:
+                            candidates.append(near)
+        if min_start is not None:
+            candidates = [c for c in candidates if c >= min_start]
         if not candidates:
             return None
         candidates.sort(key=lambda a: abs(a - pc_addr))
@@ -202,29 +226,52 @@ class MemoryStore:
                 raise ValueError(f"Unsupported datasize: {test_obj.byte_size}")
         self.write_to_mem_store(addr, test_obj.data or 0, strobe)
 
-    def allocate_region(self, size: int, align: int = 8) -> int | None:
-        """Find a free block, mark it used, return base. Caller adds data via add_to_mem_store."""
-        base = self.find_space(0, min_size=size, align=align)
+    def allocate_region(
+        self,
+        size: int,
+        align: int = 8,
+        min_start: int | None = None,
+        pc_hint: int | object | None = None,
+    ) -> int | None:
+        """Find a free block, mark it used, return base. Caller adds data via add_to_mem_store.
+
+        min_start: If set, only consider addresses >= min_start (e.g. avoid 0 as reset/trap).
+        pc_hint: If set, pick the block closest to this address (for randomising placement).
+        """
+        pc = pc_hint if pc_hint is not None else 0
+        base = self.find_space(pc, min_size=size, align=align, min_start=min_start)
         if base is None:
             return None
         self._insert_used_range(base, base + size)
         return base
 
     def reserve_data_region(self, size: int, align: int = 8) -> None:
-        """Reserve a contiguous region at end of memory for loadable data. Call once at init."""
+        """Reserve a contiguous region for loadable data. Call once at init.
+        If separate_data_region_size was set, data lives at DATA_VMA_OFFSET and does not
+        consume code space; otherwise data is at the end of the code space.
+        """
         if self._data_region_base is not None:
             return
-        base = (self._max_size - size) & -align
-        if base < 0:
-            raise AssertionError("No space for data region")
-        self._data_region_base = base
-        self._data_region_size = size
-        self._data_next = base
-        self._insert_used_range(base, base + size)
+        if self._separate_data_region:
+            self._data_region_base = DATA_VMA_OFFSET
+            self._data_region_size = size
+            self._data_next = DATA_VMA_OFFSET
+        else:
+            base = (self._max_size - size) & -align
+            if base < 0:
+                raise AssertionError("No space for data region")
+            self._data_region_base = base
+            self._data_region_size = size
+            self._data_next = base
+            self._insert_used_range(base, base + size)
 
     def get_data_region_base(self) -> int | None:
         """Return the start of the reserved data region, or None if not reserved."""
         return self._data_region_base
+
+    def get_data_region_size(self) -> int:
+        """Return the size of the reserved data region (0 if not reserved)."""
+        return self._data_region_size
 
     def allocate_data_region(self, size: int, align: int = 8) -> int | None:
         """Allocate from the reserved data region. Returns base address or None if full."""
@@ -237,6 +284,10 @@ class MemoryStore:
             return None
         self._data_next = end
         return addr
+
+    def get_data_vma_offset(self) -> int:
+        """Offset to subtract from data addresses when emitting .data (0 or DATA_VMA_OFFSET)."""
+        return self._data_vma_offset if self._separate_data_region else 0
 
     def get_handle(self, pc: int | object, size: int) -> int:
         """Find space for a region and reserve it."""

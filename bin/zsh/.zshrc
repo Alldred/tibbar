@@ -4,6 +4,21 @@
 # Jump to TIBBAR_ROOT
 cd $TIBBAR_ROOT
 
+# RISC-V toolchain: project-local or Homebrew
+export RISCV_PREFIX="${RISCV_PREFIX:-riscv64-unknown-elf-}"
+if [[ -d "$TIBBAR_ROOT/tools/riscv/bin" ]]; then
+    export PATH="$TIBBAR_ROOT/tools/riscv/bin:$PATH"
+fi
+# On macOS, ensure Homebrew bin is on PATH (for riscv-gnu-toolchain)
+if [[ -d /opt/homebrew/bin ]]; then
+    export PATH="/opt/homebrew/bin:$PATH"
+elif [[ -d /usr/local/bin ]]; then
+    export PATH="/usr/local/bin:$PATH"
+fi
+if ! command -v "${RISCV_PREFIX}as" &>/dev/null; then
+    echo "# RISC-V toolchain not found. Install with: ./bin/install-riscv-toolchain"
+fi
+
 # Update git submodules when present
 if [ -f .gitmodules ]; then
     echo "# Updating git submodules"

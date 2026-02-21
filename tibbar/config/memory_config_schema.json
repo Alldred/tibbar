@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Tibbar memory config",
+  "description": "Memory layout for Tibbar: banks (code/data, base, size, access). User configs are validated against this schema on load.",
+  "type": "object",
+  "required": ["memory"],
+  "properties": {
+    "memory": {
+      "type": "object",
+      "required": ["banks"],
+      "properties": {
+        "banks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["base", "size"],
+            "properties": {
+              "name": { "type": "string" },
+              "base": { "oneOf": [{ "type": "integer" }, { "type": "string" }] },
+              "size": { "oneOf": [{ "type": "integer" }, { "type": "string" }] },
+              "code": { "type": "boolean", "default": true },
+              "data": { "type": "boolean", "default": false },
+              "access": {
+                "type": "string",
+                "pattern": "^[rwx]+$",
+                "minLength": 1,
+                "description": "Permissions: r=read, w=write, x=execute. e.g. rx = code (no write), rw = data, rwx = unified."
+              }
+            }
+          }
+        },
+        "data_reserve": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "When code and data share one bank, bytes to reserve at end for data (default 262144). Ignored when a separate data bank exists."
+        },
+        "boot": {
+          "oneOf": [{"type": "integer", "minimum": 0}, {"type": "string"}],
+          "description": "0-based offset into code region where execution starts; omitted means random."
+        }
+      }
+    }
+  }
+}

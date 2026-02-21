@@ -33,6 +33,7 @@ Example: tibbar --generator simple --output test.S
 | `--seed` | `-s` | `42` | Random seed for reproducible runs. |
 | `--verbosity` | `-v` | `info` | Log level: `debug`, `info`, `warning`, `error`. |
 | `--debug-yaml` | — | — | If set, write debug YAML to the given file (addresses, memory layout, metadata). |
+| `--memory-config` | — | built-in | Path to memory layout YAML (banks, code/data, access, optional `data_reserve`). Default: separate instruction (rx) and data (rw) banks. For single RAM use e.g. `tibbar/config/memory_single_ram.yaml`. Validate user configs with `scripts/check-memory-config.py <path>`. |
 
 ## Examples
 
@@ -59,3 +60,11 @@ Quieter output (only warnings and errors):
 ```bash
 uv run tibbar --generator rel_branching -o branch.S --verbosity warning
 ```
+
+Generate then assemble and link in one go (requires RISC-V toolchain on PATH and `scripts/asm2elf.sh`):
+
+```bash
+uv run tibbar --generator simple --output test.S && ./scripts/asm2elf.sh test.S --link -o test.elf
+```
+
+The output file has a header with `# Load address:`, `# RAM size:`, `# Boot:`, and `# Exit:`; boot and exit addresses are randomised (exit is never 0). Load address and size come from the memory config (default or `--memory-config`). The default config has two banks (instruction and data); the data bank is emitted as a separate 0-based `.data` section with a `# Data region:` comment so the linker can place it at the data bank base. Use **access** in the config (`rx` for read-only code, `rw` for data, `rwx` for unified RAM) to document permissions; Tibbar does not generate writes to code regions.

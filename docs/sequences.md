@@ -4,12 +4,12 @@ A Tibbar test is built from **sequences** combined by a **funnel**. The generato
 
 ## High-level flow
 
-1. **Program start** — Setup (e.g. set boot PC, allocate exit region). Emits the first instructions the model will execute (e.g. jump to main code).
+1. **Program start** — Setup: choose random **boot** and **exit** addresses (exit is never 0), allocate the exit region, set trap handler. Emits the first instructions the model will execute.
 2. **Main funnel** — A list of **sequences** (e.g. “random safe instructions”, “loads”, “stores”, “relative branches”). The funnel runs each sequence in turn; when one finishes, the next runs. The exact behaviour depends on the funnel type (e.g. `SimpleFunnel` runs them one after another).
-3. **Program end** — Emits the exit region (e.g. the code that the test jumps to when “done”).
+3. **Program end** — When the model’s PC reaches the exit address, the engine places the **end sequence** there (e.g. load exit address into a GPR, `jalr` to it, then an infinite loop). The testbench can detect completion by the known exit PC or by branch-to-self at that address.
 4. **Relocate** — When the generator runs out of free space at the current PC, it uses a **relocate** sequence to emit code that moves execution to another region so generation can continue.
 
-The engine keeps asking the generator for the next instruction (or data) and places it at the current PC. It also runs a simple model of the machine: when the PC reaches already-placed code, it executes it and updates the PC (and handles traps). Generation stops when the PC reaches the exit region.
+The engine keeps asking the generator for the next instruction (or data) and places it at the current PC. It also runs a simple model of the machine: when the PC reaches already-placed code, it executes it and updates the PC (and handles traps). Generation stops when the PC reaches the exit region and executes the exit loop (branch-to-self). Every branch/jal target must have an instruction; otherwise the generator raises an error.
 
 ## Sequences
 
