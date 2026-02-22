@@ -142,21 +142,21 @@ class MemoryStore:
             candidates = [c for c in candidates if c >= min_start]
         if not candidates:
             return None
-        candidates.sort(key=lambda a: abs(a - pc_addr))
-        return candidates[0]
+        return self.random.choice(candidates)
 
     def allocate(
         self,
         min_size: int,
         align: int = 8,
         purpose: str = "code",
-        pc_hint: int | object | None = None,
+        pc: int | object | None = None,
         min_start: int | None = None,
         within: tuple[int, int] | None = None,
     ) -> int | None:
         """Allocate a block: code in code region, data in data region.
 
-        Returns base address or None.
+        Returns base address or None. When within= is set, pc is the current PC
+        used to compute the valid target range [pc+min_off, pc+max_off].
         """
         if purpose == "data":
             if self._data_region_base is None:
@@ -171,9 +171,9 @@ class MemoryStore:
 
         # purpose == "code"
         region_end = self._code_region_end()
-        pc = self._normalize_pc(pc_hint) if pc_hint is not None else 0
-        base = self._find_gap_in_region(min_size, align, pc, min_start, within, region_end)
-        if base is None and pc != 0:
+        pc_addr = self._normalize_pc(pc) if pc is not None else 0
+        base = self._find_gap_in_region(min_size, align, pc_addr, min_start, within, region_end)
+        if base is None and pc_addr != 0:
             base = self._find_gap_in_region(min_size, align, 0, min_start, within, region_end)
         if base is None:
             return None
@@ -235,7 +235,8 @@ class MemoryStore:
         if not isinstance(addr, int):
             addr = getattr(addr, "address", addr)
 
-        self.debug(f"Adding to mem_store: 0x{addr:x}: {test_obj}")
+        free = self.get_free_space(addr)
+        self.debug(f"Adding to mem_store: 0x{addr:x}: {test_obj} (free until next: {free} bytes)")
 
         if test_obj.ldst_data is not None:
             ldst_addr = test_obj.ldst_addr
@@ -281,7 +282,7 @@ class MemoryStore:
         size: int,
         align: int = 8,
         min_start: int | None = None,
-        pc_hint: int | object | None = None,
+        pc: int | object | None = None,
     ) -> int | None:
         """Find a free block in code region, mark it used, return base.
 
@@ -291,7 +292,7 @@ class MemoryStore:
             min_size=size,
             align=align,
             purpose="code",
-            pc_hint=pc_hint,
+            pc=pc,
             min_start=min_start,
         )
 

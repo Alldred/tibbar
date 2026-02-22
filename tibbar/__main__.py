@@ -34,6 +34,11 @@ def main() -> None:
     parser.add_argument("--output", "-o", type=Path, default=Path("test.S"))
     parser.add_argument("--seed", "-s", type=int, default=42)
     parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Log each instr added to memory and each executed (same as -v debug).",
+    )
+    parser.add_argument(
         "--verbosity",
         "-v",
         default="info",
@@ -62,6 +67,9 @@ def main() -> None:
         help="Memory layout YAML (banks, code/data, base, size). Default: built-in config.",
     )
     args = parser.parse_args()
+
+    if args.debug:
+        args.verbosity = "debug"
 
     if args.generator is None:
         parser.print_usage(sys.stderr)
