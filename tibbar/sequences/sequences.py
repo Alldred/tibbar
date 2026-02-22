@@ -184,8 +184,13 @@ class DefaultProgramStart:
         if mepc_addr is None or mtvec_addr is None:
             raise RuntimeError("Eumos/Lome missing mepc or mtvec CSR")
 
-        # Avoid 0 so boot can be at 0 (exit region already uses min_start=0x100).
-        exception_base = self.tibbar.mem_store.allocate(40, purpose="code", min_start=0x100)
+        # Place after first two start instructions and above 0x100 so we don't collide with boot
+        # when boot is low (e.g. 0xa0 with exit at 0x100).
+        exception_base = self.tibbar.mem_store.allocate(
+            40,
+            purpose="code",
+            min_start=max(0x108, self.tibbar.boot_address + 8),
+        )
         assert exception_base is not None, "No space for exception handler"
         self.tibbar.exception_address = exception_base
 
@@ -232,24 +237,14 @@ class DefaultProgramStart:
 
 
 class DefaultProgramEnd:
-    """Jump to exit region and place infinite loop."""
+    """Place jump-to-self at current PC; TB detects exit at this instruction."""
 
     def __init__(self, tibbar: object) -> None:
         self.tibbar = tibbar
         self.name = "DefaultProgramEnd"
 
     def gen(self) -> object:
-        yield from LoadGPR(
-            self.tibbar,
-            reg_idx=1,
-            value=self.tibbar._exit_ptr,
-            name=self.name,
-        ).gen()
-        yield GenData(
-            seq=self.name,
-            data=encode_instr(self.tibbar, "jalr", dest=0, rs1=1, imm=0),
-            comment="jalr x0, x1, 0",
-        )
+        # Single instruction: jal to self (addr=None so main loop places at current _pc).
         yield GenData(
             seq=self.name,
             data=0x0000006F,
@@ -267,8 +262,13 @@ class DefaultRelocate:
 
     def gen(self) -> object:
         min_off, max_off = get_min_max_values(self.tibbar.instrs["jal"])
+        pc = self.tibbar.get_current_pc()
+        # Target must be empty and have enough space (100 bytes).
         free_addr = self.tibbar.mem_store.allocate(
-            100, purpose="code", pc_hint=self.tibbar.get_current_pc(), within=(min_off, max_off)
+            100,
+            purpose="code",
+            pc=pc,
+            within=(min_off, max_off),
         )
 
         if free_addr is not None and self.tibbar.random.random() > 0.05:
@@ -280,17 +280,13 @@ class DefaultRelocate:
             )
         else:
             if self.mscratch_addr is None:
-                free_addr = self.tibbar.mem_store.allocate(
-                    100, purpose="code", pc_hint=self.tibbar._pc
-                )
+                free_addr = self.tibbar.mem_store.allocate(100, purpose="code", pc=self.tibbar._pc)
                 if free_addr is None:
                     size = self.tibbar.random.randint(
                         2**6,
                         min(2**20, self.tibbar.mem_store.get_memory_size() - 64),
                     )
-                    base = self.tibbar.mem_store.allocate(
-                        size, purpose="code", pc_hint=self.tibbar._pc
-                    )
+                    base = self.tibbar.mem_store.allocate(size, purpose="code", pc=self.tibbar._pc)
                     assert base is not None, "No space for relocate"
                     if self.tibbar.random.random() < 0.9:
                         offset = self.tibbar.random.randint(0, max(0, size - 48))
@@ -328,7 +324,7 @@ class DefaultRelocate:
                 comment="csrrw x0, mscratch, x1",
             )
 
-            free_addr = self.tibbar.mem_store.allocate(100, purpose="code", pc_hint=self.tibbar._pc)
+            free_addr = self.tibbar.mem_store.allocate(100, purpose="code", pc=self.tibbar._pc)
             if free_addr is not None:
                 new_loc = free_addr
             else:
@@ -336,7 +332,7 @@ class DefaultRelocate:
                     2**6,
                     min(2**20, self.tibbar.mem_store.get_memory_size() - 64),
                 )
-                base = self.tibbar.mem_store.allocate(size, purpose="code", pc_hint=self.tibbar._pc)
+                base = self.tibbar.mem_store.allocate(size, purpose="code", pc=self.tibbar._pc)
                 assert base is not None, "No space for relocate"
                 if self.tibbar.random.random() < 0.9:
                     offset = self.tibbar.random.randint(0, max(0, size - 48))

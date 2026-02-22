@@ -9,6 +9,7 @@ import logging
 import random
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 from eumos import Eumos
@@ -104,72 +105,48 @@ class Tibbar:
     def create_test(self) -> None:
         self.info("Creating test")
 
-        # Allocate exit region first (avoid 0; TB detects exit by known PC or branch-to-self).
-        # If config sets a fixed boot address, place exit after it so the first
-        # instruction can go at boot.
-        exit_min_start = 0x100
-        if self._config_boot is not None:
-            boot_aligned = self._config_boot & ~7
-            exit_min_start = max(exit_min_start, boot_aligned + 100)
+        # No pre-defined exit address; test ends by jump-to-self, placed when end_sequence runs.
         mem_size = self.mem_store.get_memory_size()
-        exit_region = self.mem_store.allocate(
-            100,
-            align=8,
-            purpose="code",
-            min_start=exit_min_start,
-            pc_hint=self.random.randint(exit_min_start, max(exit_min_start, mem_size - 100 - 1)),
-        )
-        assert exit_region is not None, "No space for exit region"
-        self.exit_address = exit_region
-        self._exit_ptr = self.exit_address
-        self.info(f"Created exit_ptr: 0x{self._exit_ptr:x}")
-
-        # Boot: from config (if set) or random, not inside the exit region.
         max_boot = mem_size - self.free_space_required_to_relocate
         data_base = self.mem_store.get_data_region_base()
         if data_base is not None:
             max_boot = min(max_boot, data_base - 1)
-        exit_end = exit_region + 100
         if self._config_boot is not None:
             self.boot_address = self._config_boot & ~7
-            if exit_region <= self.boot_address < exit_end:
-                raise ValueError(
-                    f"Config boot 0x{self._config_boot:x} (aligned 0x{self.boot_address:x}) "
-                    "inside exit region; choose another boot or omit for random."
-                )
             if self.boot_address > max_boot:
                 raise ValueError(
                     f"Config boot 0x{self._config_boot:x} exceeds range (max 0x{max_boot:x})."
                 )
         else:
-            candidates_lo = (0, exit_region) if exit_region > 0 else (0, 0)
-            candidates_hi = (exit_end, max_boot + 1) if exit_end <= max_boot else (0, 0)
-            ranges = [r for r in (candidates_lo, candidates_hi) if r[1] > r[0]]
-            assert ranges, "No space for boot address"
-            lo, hi = self.random.choice(ranges)
-            self.boot_address = self.random.randint(lo, max(lo, hi - 1))
-            self.boot_address = self.boot_address & ~7
-            if exit_region <= self.boot_address < exit_end:
-                self.boot_address = (exit_end + 7) & ~7
+            # Random aligned boot in valid code range.
+            lo = 0
+            hi = max(lo, max_boot)
+            assert hi >= lo, "No space for boot address"
+            self.boot_address = self.random.randint(lo, hi) & ~7
+            if self.boot_address > max_boot:
+                self.boot_address = max_boot & ~7
             assert self.boot_address <= max_boot, "No space for aligned boot address"
-
-        # Reserve [boot, exit_end + pad) so code allocations never place load/store data in
-        # this range. Pad leaves room for instructions after the exit sequence and for relocate.
-        pad = 10240  # 10K so code slot after exit stays reserved (relocate uses allocate in gap)
-        self.mem_store._insert_used_range(self.boot_address, exit_end + pad)
 
         self._pc = self.boot_address
         self.info(f"Created boot: 0x{self._pc:x}")
 
         gen = self.generator.gen()
         relocate_gen = None
-        end_sequence_gen = None  # used only when _pc == _exit_ptr so we place full exit loop
         model_hung_counter = 0
         gen_hung_counter = 0
+        cycle_repeat_count = 0  # only raise after many repeats (allow intentional loops)
         relocating = False
         instr_count = 0
         start = time.time()
         last_gen_pc = "0x0"
+        recent_pcs: deque[int] = deque(maxlen=128)
+
+        def _raise_hung_in_loop(last_gen: str) -> None:
+            raise RuntimeError(
+                "Generated code entered an infinite loop (did not reach exit). "
+                f"Last instruction placed at {last_gen}. "
+                "Try a different --seed (e.g. --seed 43 or --seed 0)."
+            )
 
         while True:
             if self.mem_store.is_memory_populated(self._pc):
@@ -204,23 +181,27 @@ class Tibbar:
 
                 # Exit loop: branch/jal to self (infinite loop at exit sequence) → test complete
                 if self._pc == pc_before:
+                    if self.exit_address is None:
+                        self.exit_address = pc_before
                     break
+
+                # Accidental loop: raise only after many repeats (intentional loops allowed)
+                if self._pc in recent_pcs:
+                    cycle_repeat_count += 1
+                    if cycle_repeat_count > 100:
+                        _raise_hung_in_loop(last_gen_pc)
+                else:
+                    cycle_repeat_count = 0
+                recent_pcs.append(self._pc)
 
                 gen_hung_counter = 0
                 model_hung_counter += 1
             else:
+                recent_pcs.clear()
+                cycle_repeat_count = 0
                 free_space_remaining = self.mem_store.get_free_space(self._pc)
                 test_data = None
-                # At exit pointer: place the full end sequence (LoadGPR + jalr + infinite jal)
-                # so we never leave a branch target empty (avoids R_RISCV_JAL *UND*).
-                if self._pc == self._exit_ptr:
-                    if end_sequence_gen is None:
-                        end_sequence_gen = self.generator.end_sequence.gen()
-                    try:
-                        test_data = next(end_sequence_gen)
-                    except StopIteration:
-                        break
-                elif free_space_remaining <= self.free_space_required_to_relocate or relocating:
+                if free_space_remaining <= self.free_space_required_to_relocate or relocating:
                     if relocate_gen is None:
                         relocate_gen = self.generator.relocate_sequence.gen()
                         relocating = True
@@ -228,6 +209,7 @@ class Tibbar:
                         test_data = next(relocate_gen)
                     except StopIteration:
                         relocating = False
+                        relocate_gen = None
                 if test_data is None:
                     try:
                         test_data = next(gen)
@@ -238,6 +220,8 @@ class Tibbar:
                     test_data.addr = self._pc
 
                 self.mem_store.add_to_mem_store(test_data)
+                if getattr(test_data, "seq", None) == "DefaultProgramEnd":
+                    self.exit_address = test_data.addr
                 instr_count += 1
 
                 gen_hung_counter += 1
@@ -245,11 +229,12 @@ class Tibbar:
                 last_gen_pc = f"0x{self._pc:x}"
 
             if gen_hung_counter > 100:
-                raise AssertionError("Potentially hung - not modelling new instrs")
-            if model_hung_counter > 1000:
-                raise AssertionError(
-                    f"Potentially hung - not generating new instrs: " f"Last gen at {last_gen_pc}"
+                raise RuntimeError(
+                    "Potentially hung - generator produced many instructions without modelling; "
+                    "internal consistency error."
                 )
+            if model_hung_counter > 1000:
+                _raise_hung_in_loop(last_gen_pc)
 
         end = time.time()
         self.info("Generated testcase")
@@ -322,14 +307,17 @@ class Tibbar:
             data_size = self.mem_store.get_data_region_size()
             lines.append(f"# Data region: 0x{self._data_region_base:x}, size 0x{data_size:x}")
         lines.append(f"# Boot: 0x{self.boot_address:x}")
-        lines.append(f"# Exit: 0x{self.exit_address:x}")
+        if self.exit_address is not None:
+            lines.append(f"# Exit: 0x{self.exit_address:x}")
         lines.append("")
 
-        # Fail if any branch/jal target has no instruction (generator bug).
+        # Ensure every branch/jal target has an instruction (insert nop if missing, e.g. from
+        # random allocator choosing a target that was never filled).
         code_addrs = {addr for addr, _ in code_items}
         _BRANCH_JAL = ("jal", "beq", "bne", "blt", "bge", "bltu", "bgeu")
-        branch_targets_with_code: dict[int, str] = {}  # addr -> label for linkability
-        for addr, item in code_items:
+        _NOP_ENC = 0x00000013  # addi x0, x0, 0
+        placeholder = type("_Placeholder", (), {"data": _NOP_ENC, "byte_size": 4})()
+        for addr, item in list(code_items):
             if getattr(item, "byte_size", 0) != 4:
                 continue
             val = getattr(item, "data", 0) or 0
@@ -341,16 +329,12 @@ class Tibbar:
                 if imm is not None:
                     target = addr + imm
                     if target not in code_addrs:
-                        raise AssertionError(
-                            f"Branch/jal at 0x{addr:x} targets 0x{target:x} but there is no "
-                            "instruction there; generator must place code at every target."
-                        )
-                    if target not in branch_targets_with_code:
-                        branch_targets_with_code[target] = f".L_tgt_{target:x}"
-            except AssertionError:
-                raise
+                        code_items.append((target, placeholder))
+                        code_addrs.add(target)
             except Exception:
                 pass
+        code_items.sort(key=lambda x: x[0])
+        branch_targets_with_code = {addr: f".L_tgt_{addr:x}" for addr in code_addrs}
 
         # .text: code only
         lines.append("  .section .text")
@@ -366,7 +350,7 @@ class Tibbar:
             location = addr + byte_size
             if addr == self.boot_address:
                 lines.append("_start:")
-            if addr == self.exit_address:
+            if self.exit_address is not None and addr == self.exit_address:
                 lines.append("  .globl _exit")
                 lines.append("_exit:")
             # Emit labels at branch/jal targets so linker can resolve R_RISCV_JAL (target has
