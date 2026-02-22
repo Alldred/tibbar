@@ -2,13 +2,6 @@ version = 1
 revision = 3
 requires-python = ">=3.13"
 
-[manifest]
-members = [
-    "eumos",
-    "lome",
-    "tibbar",
-]
-
 [[package]]
 name = "attrs"
 version = "25.4.0"
@@ -123,28 +116,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf57
 [[package]]
 name = "eumos"
 version = "0.1.0"
-source = { editable = "vendor/eumos" }
+source = { git = "ssh://git@github.com/Alldred/eumos.git#1bebd8f7064843db00f4ec7418adb5441fa08b08" }
 dependencies = [
     { name = "pre-commit" },
     { name = "pykwalify" },
     { name = "pyyaml" },
 ]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-cov" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pre-commit" },
-    { name = "pykwalify" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest-cov", marker = "extra == 'dev'" },
-    { name = "pyyaml" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "filelock"
@@ -203,30 +180,13 @@ wheels = [
 [[package]]
 name = "lome"
 version = "0.1.0"
-source = { editable = "vendor/lome" }
+source = { git = "ssh://git@github.com/Alldred/lome.git#1ce8a7dd80ea7c418a0efe30f761802b717067de" }
 dependencies = [
     { name = "eumos" },
     { name = "pre-commit" },
     { name = "pykwalify" },
     { name = "pyyaml" },
 ]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-cov" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "eumos", editable = "vendor/eumos" },
-    { name = "pre-commit" },
-    { name = "pykwalify" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest-cov", marker = "extra == 'dev'" },
-    { name = "pyyaml" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "nodeenv"
@@ -506,9 +466,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "eumos", editable = "vendor/eumos" },
+    { name = "eumos", git = "ssh://git@github.com/Alldred/eumos.git" },
     { name = "jsonschema" },
-    { name = "lome", editable = "vendor/lome" },
+    { name = "lome", git = "ssh://git@github.com/Alldred/lome.git" },
     { name = "pre-commit" },
     { name = "pykwalify" },
     { name = "pytest", marker = "extra == 'dev'" },

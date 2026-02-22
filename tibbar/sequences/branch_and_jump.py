@@ -48,9 +48,13 @@ class RelativeBranching:
         pc = self.tibbar.get_current_pc()
         min_off, max_off = get_min_max_values(instr)
         # Prefer forward branches (positive offset) to avoid infinite loops
-        target = self.tibbar.mem_store.find_space(pc, min_size=64, within=(4, max_off))
+        target = self.tibbar.mem_store.allocate(
+            64, align=4, purpose="code", pc_hint=pc, within=(4, max_off)
+        )
         if target is None:
-            target = self.tibbar.mem_store.find_space(pc, min_size=64, within=(min_off, max_off))
+            target = self.tibbar.mem_store.allocate(
+                64, align=4, purpose="code", pc_hint=pc, within=(min_off, max_off)
+            )
 
         if target is not None:
             offset = target - pc
@@ -90,7 +94,7 @@ class AbsoluteBranching:
         mnemonic = self.tibbar.random.choice(self._jump_instrs)
         base_reg = self.tibbar.random.randint(1, 31)
         pc = self.tibbar.get_current_pc()
-        target = self.tibbar.mem_store.find_space(pc, min_size=64, align=4)
+        target = self.tibbar.mem_store.allocate(64, align=4, purpose="code", pc_hint=pc)
         if target is None:
             self.tibbar.debug("AbsoluteBranching: no space for jump target")
             return

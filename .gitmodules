@@ -1,6 +1,0 @@
-[submodule "vendor/eumos"]
-	path = vendor/eumos
-	url = git@github.com:Alldred/eumos.git
-[submodule "vendor/lome"]
-	path = vendor/lome
-	url = git@github.com:Alldred/lome.git

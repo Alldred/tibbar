@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Stuart Alldred.
 
-"""Model wrapper: Lome RISCVModel + MemoryInterface binding to MemoryStore."""
+"""Model wrapper: Lome model + MemoryInterface binding to MemoryStore."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from eumos import Eumos
-from riscv_model import RISCVModel
-from riscv_model.memory import MemoryInterface
+from lome import Lome
+from lome.memory import MemoryInterface
 
 from tibbar.utils import MASK_64_BIT
 
@@ -31,9 +31,9 @@ class TibbarMemoryAdapter(MemoryInterface):
         self._mem.write_to_mem_store(addr, value, strobe)
 
 
-def create_model(mem_store: "MemoryStore", eumos: Eumos | None = None) -> RISCVModel:
-    """Create RISCVModel with memory bound to the given MemoryStore."""
+def create_model(mem_store: "MemoryStore", eumos: Eumos | None = None) -> Lome:
+    """Create Lome (RISCV model) with memory bound to the given MemoryStore."""
     if eumos is None:
         eumos = Eumos()
     memory = TibbarMemoryAdapter(mem_store)
-    return RISCVModel(eumos, memory=memory)
+    return Lome(eumos, memory=memory)
