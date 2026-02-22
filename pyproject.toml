@@ -49,7 +49,10 @@ exclude_lines = [
 
 [tool.setuptools]
 include-package-data = true
-packages = ["tibbar"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tibbar*"]
 
 [tool.setuptools.package-data]
 tibbar = ["config/*.yaml", "config/*.json"]
