@@ -105,10 +105,17 @@ class Tibbar:
         self.info("Creating test")
 
         # Allocate exit region first (avoid 0; TB detects exit by known PC or branch-to-self).
+        # If config sets a fixed boot address, place exit after it so the first
+        # instruction can go at boot.
         exit_min_start = 0x100
+        if self._config_boot is not None:
+            boot_aligned = self._config_boot & ~7
+            exit_min_start = max(exit_min_start, boot_aligned + 100)
         mem_size = self.mem_store.get_memory_size()
-        exit_region = self.mem_store.allocate_region(
+        exit_region = self.mem_store.allocate(
             100,
+            align=8,
+            purpose="code",
             min_start=exit_min_start,
             pc_hint=self.random.randint(exit_min_start, max(exit_min_start, mem_size - 100 - 1)),
         )
@@ -145,6 +152,11 @@ class Tibbar:
             if exit_region <= self.boot_address < exit_end:
                 self.boot_address = (exit_end + 7) & ~7
             assert self.boot_address <= max_boot, "No space for aligned boot address"
+
+        # Reserve [boot, exit_end + pad) so code allocations never place load/store data in
+        # this range. Pad leaves room for instructions after the exit sequence and for relocate.
+        pad = 10240  # 10K so code slot after exit stays reserved (relocate uses allocate in gap)
+        self.mem_store._insert_used_range(self.boot_address, exit_end + pad)
 
         self._pc = self.boot_address
         self.info(f"Created boot: 0x{self._pc:x}")

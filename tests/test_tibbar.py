@@ -301,6 +301,26 @@ def test_cli_smoke(tmp_path):
 
     from tibbar.__main__ import main
 
+    # Use a memory config without fixed boot so generation completes reliably
+    # (fixed boot 0x100 can cause trap handler at 0xfc to spin).
+    mem_config = tmp_path / "mem.yaml"
+    mem_config.write_text(
+        """
+memory:
+  banks:
+    - name: CODE
+      base: 0x80000000
+      size: 0x40000
+      code: true
+      data: false
+      access: rx
+    - name: DATA
+      base: 0x80040000
+      size: 0x40000
+      data: true
+      access: rw
+"""
+    )
     old_argv = sys.argv
     try:
         sys.argv = [
@@ -309,6 +329,10 @@ def test_cli_smoke(tmp_path):
             "simple",
             "--output",
             str(tmp_path / "out.S"),
+            "--seed",
+            "1",
+            "--memory-config",
+            str(mem_config),
         ]
         main()
         assert (tmp_path / "out.S").exists()

@@ -81,23 +81,36 @@ class MemoryStore:
                 return False
         return True
 
-    def find_space(
+    def _code_region_end(self) -> int:
+        """End of code region: for single bank, data base; for multi-bank, max_size."""
+        if self._data_region_base is not None and not self._separate_data_region:
+            return self._data_region_base
+        return self._max_size
+
+    def _find_gap_in_region(
         self,
-        pc: int | object,
         min_size: int,
-        align: int = 8,
-        within: tuple[int, int] | None = None,
-        min_start: int | None = None,
+        align: int,
+        pc_addr: int,
+        min_start: int | None,
+        within: tuple[int, int] | None,
+        region_end: int | None,
     ) -> int | None:
-        pc_addr = self._normalize_pc(pc)
+        """Find one gap in [0, region_end) (or [0, _max_size) if region_end is None).
+
+        Returns a block with at least min_size bytes, or None.
+        """
         gaps: list[tuple[int, int]] = []
         prev_end = 0
+        effective_max = self._max_size if region_end is None else min(self._max_size, region_end)
         for s, e in self._used_ranges:
             if s > prev_end:
-                gaps.append((prev_end, s))
+                gap_end = min(s, effective_max)
+                if gap_end > prev_end:
+                    gaps.append((prev_end, gap_end))
             prev_end = max(prev_end, e)
-        if prev_end < self._max_size:
-            gaps.append((prev_end, self._max_size))
+        if prev_end < effective_max:
+            gaps.append((prev_end, effective_max))
 
         candidates: list[int] = []
         for gap_start, gap_end in gaps:
@@ -114,13 +127,11 @@ class MemoryStore:
                         if cand + min_size <= gap_end and cand <= hi:
                             candidates.append(cand)
             else:
-                # First valid address in this gap (respect min_start so we don't pick 0)
                 start_cand = aligned_start
                 if min_start is not None and aligned_start < min_start:
                     start_cand = (min_start + align - 1) & -align
                 if start_cand + min_size <= gap_end:
                     candidates.append(start_cand)
-                    # Also add address near pc_addr so caller can randomise (e.g. exit region)
                     hi = gap_end - min_size
                     if hi > start_cand:
                         near = max(start_cand, min(hi, pc_addr))
@@ -134,16 +145,55 @@ class MemoryStore:
         candidates.sort(key=lambda a: abs(a - pc_addr))
         return candidates[0]
 
+    def allocate(
+        self,
+        min_size: int,
+        align: int = 8,
+        purpose: str = "code",
+        pc_hint: int | object | None = None,
+        min_start: int | None = None,
+        within: tuple[int, int] | None = None,
+    ) -> int | None:
+        """Allocate a block: code in code region, data in data region.
+
+        Returns base address or None.
+        """
+        if purpose == "data":
+            if self._data_region_base is None:
+                self.reserve_data_region(256 * 1024, align=align)
+            assert self._data_region_base is not None
+            addr = (self._data_next + align - 1) & -align
+            end = addr + min_size
+            if end > self._data_region_base + self._data_region_size:
+                return None
+            self._data_next = end
+            return addr
+
+        # purpose == "code"
+        region_end = self._code_region_end()
+        pc = self._normalize_pc(pc_hint) if pc_hint is not None else 0
+        base = self._find_gap_in_region(min_size, align, pc, min_start, within, region_end)
+        if base is None and pc != 0:
+            base = self._find_gap_in_region(min_size, align, 0, min_start, within, region_end)
+        if base is None:
+            return None
+        self._insert_used_range(base, base + min_size)
+        return base
+
     def get_free_space(self, pc: int | object) -> int:
         pc_addr = self._normalize_pc(pc)
         if pc_addr >= self._max_size:
             return 0
+        region_end = self._code_region_end()
+        if pc_addr >= region_end:
+            return 0
         for s, e in self._used_ranges:
             if s > pc_addr:
-                return s - pc_addr
+                free = s - pc_addr
+                return min(free, region_end - pc_addr)
             if e > pc_addr:
                 return 0
-        return self._max_size - pc_addr
+        return min(self._max_size - pc_addr, region_end - pc_addr)
 
     def compact_and_return(self) -> dict[int, object]:
         output: dict[int, object] = {}
@@ -233,17 +283,17 @@ class MemoryStore:
         min_start: int | None = None,
         pc_hint: int | object | None = None,
     ) -> int | None:
-        """Find a free block, mark it used, return base. Caller adds data via add_to_mem_store.
+        """Find a free block in code region, mark it used, return base.
 
-        min_start: If set, only consider addresses >= min_start (e.g. avoid 0 as reset/trap).
-        pc_hint: If set, pick the block closest to this address (for randomising placement).
+        Thin wrapper around allocate(..., purpose="code").
         """
-        pc = pc_hint if pc_hint is not None else 0
-        base = self.find_space(pc, min_size=size, align=align, min_start=min_start)
-        if base is None:
-            return None
-        self._insert_used_range(base, base + size)
-        return base
+        return self.allocate(
+            min_size=size,
+            align=align,
+            purpose="code",
+            pc_hint=pc_hint,
+            min_start=min_start,
+        )
 
     def reserve_data_region(self, size: int, align: int = 8) -> None:
         """Reserve a contiguous region for loadable data. Call once at init.
@@ -274,30 +324,15 @@ class MemoryStore:
         return self._data_region_size
 
     def allocate_data_region(self, size: int, align: int = 8) -> int | None:
-        """Allocate from the reserved data region. Returns base address or None if full."""
-        if self._data_region_base is None:
-            self.reserve_data_region(256 * 1024, align=align)
-        assert self._data_region_base is not None
-        addr = (self._data_next + align - 1) & -align
-        end = addr + size
-        if end > self._data_region_base + self._data_region_size:
-            return None
-        self._data_next = end
-        return addr
+        """Allocate from the reserved data region.
+
+        Thin wrapper around allocate(..., purpose="data").
+        """
+        return self.allocate(min_size=size, align=align, purpose="data")
 
     def get_data_vma_offset(self) -> int:
-        """Offset to subtract from data addresses when emitting .data (0 or DATA_VMA_OFFSET)."""
-        return self._data_vma_offset if self._separate_data_region else 0
+        """Offset to subtract from data addresses when emitting .data.
 
-    def get_handle(self, pc: int | object, size: int) -> int:
-        """Find space for a region and reserve it."""
-        pc_addr = self._normalize_pc(pc)
-        base = self.find_space(pc_addr, min_size=size, align=8)
-        if base is not None:
-            self._insert_used_range(base, base + size)
-            return base
-        base = self.find_space(0, min_size=size, align=8)
-        if base is not None:
-            self._insert_used_range(base, base + size)
-            return base
-        raise AssertionError("No space left for allocation")
+        Returns 0 or DATA_VMA_OFFSET.
+        """
+        return self._data_vma_offset if self._separate_data_region else 0
