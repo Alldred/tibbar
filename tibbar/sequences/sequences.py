@@ -30,69 +30,95 @@ class LoadGPR:
         self.reg_idx = reg_idx
         self.name = f"{name} [LoadGPR]" if name else "LoadGPR"
 
-    def _sign_extend_to_64(self, val: int, chosen_bit: int) -> int:
-        if chosen_bit < 0 or chosen_bit > 63:
-            raise ValueError("Chosen bit must be 0..63")
-        sign_bit = (val >> chosen_bit) & 1
+    def _as_u64_sign_extended_from_bit(self, val: int, sign_bit_index: int) -> int:
+        """Interpret val[sign_bit_index:0] as signed and return 64-bit two's complement pattern."""
+        if sign_bit_index < 0 or sign_bit_index > 63:
+            raise ValueError("sign_bit_index must be 0..63")
+        sign_bit = (val >> sign_bit_index) & 1
         if sign_bit:
-            return (val | (MASK_64_BIT << (chosen_bit + 1))) & MASK_64_BIT
-        return val & ((1 << (chosen_bit + 1)) - 1)
+            return (val | (MASK_64_BIT << (sign_bit_index + 1))) & MASK_64_BIT
+        return val & ((1 << (sign_bit_index + 1)) - 1)
 
     def _find_first_set(self, x: int) -> int:
         if x == 0:
             return -1
         return (x & -x).bit_length() - 1
 
+    def _as_signed_from_n_bits(self, val: int, width: int) -> int:
+        """Interpret the lower N bits as a signed integer."""
+        if width < 1:
+            raise ValueError("width must be >= 1")
+        mask = (1 << width) - 1
+        val &= mask
+        sign_bit = 1 << (width - 1)
+        return val - (1 << width) if (val & sign_bit) else val
+
+    def _fits_signed_n_bits(self, val: int, width: int) -> bool:
+        """True when val's u64 pattern is sign-extension of a signed N-bit number."""
+        return val == self._as_u64_sign_extended_from_bit(val, width - 1)
+
+    def _emit_lui(self, imm20: int) -> object:
+        yield GenData(
+            data=encode_instr(self.tibbar, "lui", dest=self.reg_idx, imm=imm20),
+            comment=f"lui x{self.reg_idx}, 0x{imm20:x}",
+            seq=self.name,
+        )
+
+    def _emit_addiw(self, src_reg: int, imm12: int) -> object:
+        yield GenData(
+            data=encode_instr(self.tibbar, "addiw", dest=self.reg_idx, src1=src_reg, imm=imm12),
+            comment=f"addiw x{self.reg_idx}, x{src_reg}, {imm12}",
+            seq=self.name,
+        )
+
+    def _emit_slli(self, shamt: int) -> object:
+        yield GenData(
+            data=encode_instr(
+                self.tibbar,
+                "slli",
+                dest=self.reg_idx,
+                src1=self.reg_idx,
+                shamt=shamt,
+            ),
+            comment=f"slli x{self.reg_idx}, x{self.reg_idx}, {shamt}",
+            seq=self.name,
+        )
+
+    def _emit_addi(self, imm12: int) -> object:
+        yield GenData(
+            data=encode_instr(
+                self.tibbar,
+                "addi",
+                dest=self.reg_idx,
+                src1=self.reg_idx,
+                imm=imm12,
+            ),
+            comment=f"addi x{self.reg_idx}, x{self.reg_idx}, {imm12}",
+            seq=self.name,
+        )
+
     def _li_gen(self) -> object:
         val = self.value
-        if val == self._sign_extend_to_64(val, 31):
+        # 32-bit path: LUI + ADDIW
+        if self._fits_signed_n_bits(val, 32):
             src_reg = 0
             u20 = ((val + 0x800) >> 12) & 0xFFFFF
-            l12 = self._sign_extend_to_64(val, 11)
+            l12 = self._as_signed_from_n_bits(val, 12)
             if u20:
-                yield GenData(
-                    data=encode_instr(self.tibbar, "lui", dest=self.reg_idx, imm=u20),
-                    comment=f"lui x{self.reg_idx}, 0x{u20:x}",
-                    seq=self.name,
-                )
+                yield from self._emit_lui(u20)
                 src_reg = self.reg_idx
             if l12 or u20 == 0:
-                yield GenData(
-                    data=encode_instr(
-                        self.tibbar, "addiw", dest=self.reg_idx, src1=src_reg, imm=l12
-                    ),
-                    comment=f"addiw x{self.reg_idx}, x{src_reg}, {l12}",
-                    seq=self.name,
-                )
+                yield from self._emit_addiw(src_reg, l12)
         else:
-            l12 = self._sign_extend_to_64(val, 11)
+            # General 64-bit path: recursive high-part load, then shift and low add.
+            l12 = self._as_signed_from_n_bits(val, 12)
             u52 = (val + 0x800) >> 12
             shamt = 12 + self._find_first_set(u52)
-            u52 = self._sign_extend_to_64(u52 >> (shamt - 12), 64 - shamt)
+            u52 = self._as_u64_sign_extended_from_bit(u52 >> (shamt - 12), 64 - shamt)
             yield from LoadGPR(self.tibbar, self.reg_idx, u52, self.name).gen()
-            yield GenData(
-                data=encode_instr(
-                    self.tibbar,
-                    "slli",
-                    dest=self.reg_idx,
-                    src1=self.reg_idx,
-                    shamt=shamt,
-                ),
-                comment=f"slli x{self.reg_idx}, x{self.reg_idx}, {shamt}",
-                seq=self.name,
-            )
+            yield from self._emit_slli(shamt)
             if l12:
-                yield GenData(
-                    data=encode_instr(
-                        self.tibbar,
-                        "addi",
-                        dest=self.reg_idx,
-                        src1=self.reg_idx,
-                        imm=l12,
-                    ),
-                    comment=f"addi x{self.reg_idx}, x{self.reg_idx}, {l12}",
-                    seq=self.name,
-                )
+                yield from self._emit_addi(l12)
 
     def gen(self) -> object:
         if self.reg_idx == 0:
