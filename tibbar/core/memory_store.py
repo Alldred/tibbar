@@ -145,13 +145,15 @@ class MemoryStore:
         for lo_raw, hi_raw in self._code_regions:
             lo = lo_raw
             hi = hi_raw
+            start_hi: int | None = None
             if min_start is not None:
                 lo = max(lo, int(min_start))
             if within is not None and pc_addr is not None:
                 min_off, max_off = within
                 lo = max(lo, int(pc_addr) + int(min_off))
-                hi = min(hi, int(pc_addr) + int(max_off) + 1)
-            if hi - lo < min_size:
+                # within constrains branch/jump target address (block start), not full block size.
+                start_hi = min(hi - 1, int(pc_addr) + int(max_off))
+            if start_hi is not None and start_hi < lo:
                 continue
             last = hi - min_size
             if last < lo:
@@ -177,6 +179,8 @@ class MemoryStore:
                 if gap_hi - gap_lo >= min_size:
                     cand_lo = (gap_lo + align - 1) & -align
                     cand_hi = gap_hi - min_size
+                    if start_hi is not None:
+                        cand_hi = min(cand_hi, start_hi)
                     if cand_lo <= cand_hi:
                         _add_candidate(cand_lo)
                         if pc_addr is not None:
@@ -193,6 +197,8 @@ class MemoryStore:
                 if gap_hi - gap_lo >= min_size:
                     cand_lo = (gap_lo + align - 1) & -align
                     cand_hi = gap_hi - min_size
+                    if start_hi is not None:
+                        cand_hi = min(cand_hi, start_hi)
                     if cand_lo <= cand_hi:
                         _add_candidate(cand_lo)
                         if pc_addr is not None:

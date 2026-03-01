@@ -108,6 +108,9 @@ class Tibbar:
         self.eumos = Eumos()
         self.instrs = self.eumos.instructions
         self.decoder = Decoder(instructions=self.eumos.instructions)
+        # Current model loop fetches fixed-width 32-bit opcodes.
+        # When compressed execution is implemented end-to-end, make this dynamic.
+        self._fetch_width_bytes = 4
         causes = getattr(self.eumos, "exception_causes", None)
         self.exception_ids = {c.code: c.identifier for c in causes.values()} if causes else {}
         self.csr_addresses = {name: csr.address for name, csr in self.eumos.csrs.items()}
@@ -228,7 +231,7 @@ class Tibbar:
 
         while True:
             if self.mem_store.is_memory_populated(self._pc):
-                mem_data = self.mem_store.read_from_mem_store(self._pc, 4)
+                mem_data = self.mem_store.read_from_mem_store(self._pc, self._fetch_width_bytes)
                 instr_asm = f".word 0x{mem_data:08x}"
                 if decode_for_asm:
                     try:
@@ -549,7 +552,7 @@ class Tibbar:
         try:
             # Lome PC is already absolute. This function only validates that
             # control flow stays inside configured executable banks.
-            return self._addr.require_code_addr(model_pc, 1)
+            return self._addr.require_code_addr(model_pc, self._fetch_width_bytes)
         except ValueError:
             pass
         raise RuntimeError(
@@ -679,7 +682,9 @@ class Tibbar:
                 if imm is not None:
                     target_runtime = addr + imm
                     try:
-                        target = self._addr.require_code_addr(target_runtime, 1)
+                        target = self._addr.require_code_addr(
+                            target_runtime, self._fetch_width_bytes
+                        )
                     except ValueError:
                         # Unmappable targets are outside configured code banks.
                         continue
@@ -731,7 +736,9 @@ class Tibbar:
                             if imm is not None:
                                 target_runtime = runtime_addr + imm
                                 try:
-                                    target = self._addr.require_code_addr(target_runtime, 1)
+                                    target = self._addr.require_code_addr(
+                                        target_runtime, self._fetch_width_bytes
+                                    )
                                 except ValueError:
                                     target = None
                                 label = (

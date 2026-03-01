@@ -53,6 +53,11 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --linker-script)
+            if [[ -z "${2:-}" || "$2" == -* ]]; then
+                echo "[ERROR] --linker-script requires a linker script path argument" >&2
+                usage
+                exit 1
+            fi
             LINKER_SCRIPT="$2"
             shift 2
             ;;
