@@ -48,8 +48,11 @@ class RelativeBranching:
         pc = self.tibbar.get_current_pc()
         min_off, max_off = get_min_max_values(instr)
         # Target must be in an empty block with enough space (min 64 bytes).
-        target = self.tibbar.mem_store.allocate(
-            64, align=4, purpose="code", pc=pc, within=(min_off, max_off)
+        target = self.tibbar.allocate_code(
+            64,
+            align=4,
+            pc=pc,
+            within=(min_off, max_off),
         )
 
         if target is not None:
@@ -91,12 +94,17 @@ class AbsoluteBranching:
         base_reg = self.tibbar.random.randint(1, 31)
         pc = self.tibbar.get_current_pc()
         # Target must be empty and have enough space (64 bytes).
-        target = self.tibbar.mem_store.allocate(64, align=4, purpose="code", pc=pc)
+        target = self.tibbar.allocate_code(64, align=4, pc=pc)
         if target is None:
             self.tibbar.debug("AbsoluteBranching: no space for jump target")
             return
         target = target & ~3
-        yield from LoadGPR(self.tibbar, reg_idx=base_reg, value=target, name=self.name).gen()
+        yield from LoadGPR(
+            self.tibbar,
+            reg_idx=base_reg,
+            value=target,
+            name=self.name,
+        ).gen()
         rd = self.tibbar.random.choice([0, 1])
         instr_enc = encode_instr(self.tibbar, mnemonic, rd=rd, rs1=base_reg, imm=0)
         yield GenData(data=instr_enc, comment=f"{mnemonic}", seq=self.name)

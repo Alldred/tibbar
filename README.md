@@ -21,7 +21,7 @@ Or run as a module:
 uv run python -m tibbar --generator simple --output test.S
 ```
 
-This writes `test.S` with RISC-V assembly. **Boot** and **exit** addresses are randomised (exit is never 0). The file header has `# Load address:`, `# RAM size:`, `# Boot:`, and `# Exit:`; a testbench can detect completion by that PC or by a branch-to-self at the exit address. Memory layout comes from a **config file**: the default uses separate instruction (rx) and data (rw) banks; for a single-RAM linker script use `--memory-config` with a one-bank YAML (see [Memory layout](docs/README.md#memory-layout)).
+This writes `test.S` with RISC-V assembly. **Boot** and **exit** addresses are randomised (exit is never 0). The file header has `# Load address:`, `# RAM size:`, `# Boot:`, and `# Exit:`; `# Boot`/`# Exit` are **runtime absolute addresses**. A testbench can detect completion by that PC or by a branch-to-self at the exit address. Memory layout comes from a **config file**: Tibbar supports multiple code banks (`code: true`) and multiple pure data banks (`data: true`, `code: false`) with absolute placement in those banks; the default uses separate instruction (`rwx`) and data (`rw`) banks. For a single-RAM linker script use `--memory-config` with a one-bank YAML (see [Memory layout](docs/README.md#memory-layout)).
 
 ---
 
@@ -80,7 +80,7 @@ To assemble Tibbar’s `.S` output (or any RISC-V assembly) to ELF for a RISC-V 
    ./scripts/asm2elf.sh test.S --march=rv32imac
    ```
 
-   The script uses `RISCV_PREFIX` (default `riscv64-unknown-elf-`) and the linker script `scripts/riscv_bare.ld` when linking. The toolchain must be on PATH (e.g. after `./bin/shell`).
+  The script uses `RISCV_PREFIX` (default `riscv64-unknown-elf-`). When Tibbar generates `test.S`, it also writes `test.ld` describing the configured memory banks; `asm2elf.sh --link` prefers this sidecar linker script automatically (falling back to `scripts/riscv_bare.ld` if no sidecar exists). The toolchain must be on PATH (e.g. after `./bin/shell`).
 
    **Typical full run:** generate, then assemble and link:
 
