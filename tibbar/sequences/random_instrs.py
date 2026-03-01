@@ -34,17 +34,26 @@ class RandomInstrs(BaseConstraint):
         sign_bit = 1 << (size_bits - 1)
         return raw - (1 << size_bits) if (raw & sign_bit) else raw
 
-    def _normalize_immediate(self, instr_name: str, imm: int) -> int:
-        # Shift-immediate forms reserve high immediate bits in RV64 encodings.
-        if instr_name in {"slliw", "srliw"}:
-            return imm & 0x1F
-        if instr_name == "sraiw":
-            return 0x400 | (imm & 0x1F)
-        if instr_name in {"slli", "srli"}:
-            return imm & 0x3F
-        if instr_name == "srai":
-            return 0x400 | (imm & 0x3F)
-        return imm
+    def _sample_semantic_immediate(
+        self, instr: object, operand_name: str, default_size_bits: int
+    ) -> int:
+        is_shift, width, align = instr.immediate_sampling_profile(
+            operand_name,
+            fallback_size_bits=default_size_bits,
+        )
+        if is_shift:
+            return self.random.randint(0, (1 << width) - 1)
+
+        lo = -(1 << (width - 1))
+        hi = (1 << (width - 1)) - 1
+        if align <= 1:
+            return self.random.randint(lo, hi)
+
+        lo_units = -((-lo) // align)
+        hi_units = hi // align
+        if lo_units > hi_units:
+            return self.random.randint(lo, hi)
+        return self.random.randint(lo_units, hi_units) * align
 
     def _sample_valid_instance(self, instr_name: str) -> InstructionInstance:
         instr = self.tibbar.instrs[instr_name]
@@ -58,8 +67,12 @@ class RandomInstrs(BaseConstraint):
                     operand.type,
                     int(operand.size),
                 )
-                if operand_name == "imm":
-                    value = self._normalize_immediate(instr_name, value)
+                if operand.type == "immediate":
+                    value = self._sample_semantic_immediate(
+                        instr,
+                        operand_name,
+                        int(operand.size),
+                    )
                 operand_values[operand_name] = value
 
             try:

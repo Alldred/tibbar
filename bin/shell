@@ -15,9 +15,31 @@ if [[ -d "$TIBBAR_ROOT/.git" ]]; then
     git -C "$TIBBAR_ROOT" submodule update --init
 fi
 
+# Parse --dev option (strip from args so it isn't passed to zsh)
+SHELL_ARGS=()
+UV_EXTRAS=()
+for arg in "$@"; do
+    if [[ "$arg" == "--dev" ]]; then
+        UV_EXTRAS=(--extra dev)
+    else
+        SHELL_ARGS+=("$arg")
+    fi
+done
+
+# Check and update all dependencies before entering the shell
+(
+    cd "$TIBBAR_ROOT" || exit 1
+    uv lock --upgrade
+    uv sync "${UV_EXTRAS[@]}"
+) || {
+    echo "[\033[0;31mERROR\033[0m] Failed to update dependencies via uv" >&2
+    exit 1
+}
+echo "[\033[0;32mINFO\033[0m] Tibbar dependencies are up to date."
+
 USER_HISTFILE=${HISTFILE:-$HOME/.zsh_history}
 
 TIBBAR_ROOT=$TIBBAR_ROOT \
     USER_HISTFILE=$USER_HISTFILE \
     ZDOTDIR=$TIBBAR_ROOT/bin/zsh \
-    /bin/zsh -i $@
+    /bin/zsh -i "${SHELL_ARGS[@]}"
