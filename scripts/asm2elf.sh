@@ -8,12 +8,13 @@
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LINKER_SCRIPT="$SCRIPT_DIR/riscv_bare.ld"
+DEFAULT_LINKER_SCRIPT="$SCRIPT_DIR/riscv_bare.ld"
 
 # Defaults
 LINK=0
 MARCH="${MARCH:-rv64gc}"
 OUTPUT=""
+LINKER_SCRIPT=""
 PREFIX="${RISCV_PREFIX:-riscv64-unknown-elf-}"
 # Trim trailing hyphen for consistency
 PREFIX="${PREFIX%-}"
@@ -24,6 +25,7 @@ usage() {
     echo "  -o, --output <path>   Output file (default: input with .o or .elf)"
     echo "  --link                Link to executable ELF (entry _start)"
     echo "  --march=<value>       RISC-V arch (default: rv64gc)"
+    echo "  --linker-script <ld>  Linker script path (default: sidecar <input>.ld if present, else scripts/riscv_bare.ld)"
     echo "  -h, --help            This help"
     echo ""
     echo "Environment: RISCV_PREFIX (default: riscv64-unknown-elf-)"
@@ -48,6 +50,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --link)
             LINK=1
+            shift
+            ;;
+        --linker-script)
+            LINKER_SCRIPT="$2"
+            shift 2
+            ;;
+        --linker-script=*)
+            LINKER_SCRIPT="${1#--linker-script=}"
             shift
             ;;
         --march=*)
@@ -130,6 +140,16 @@ if ! command -v "$LD" &>/dev/null; then
     echo "[ERROR] RISC-V linker not found: $LD" >&2
     rm -f "$OBJ"
     exit 1
+fi
+
+# If not explicitly set, prefer sidecar script next to input.
+if [[ -z "$LINKER_SCRIPT" ]]; then
+    SIDE_LD="${INPUT%.*}.ld"
+    if [[ -f "$SIDE_LD" ]]; then
+        LINKER_SCRIPT="$SIDE_LD"
+    else
+        LINKER_SCRIPT="$DEFAULT_LINKER_SCRIPT"
+    fi
 fi
 
 if [[ ! -f "$LINKER_SCRIPT" ]]; then

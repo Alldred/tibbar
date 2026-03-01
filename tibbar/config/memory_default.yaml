@@ -1,17 +1,17 @@
 # Default memory config: separate instruction and data banks to exercise full pipeline.
-# Instruction bank: execute-only (rx) - Tibbar generates there; self-modifying code must not target it.
+# Instruction bank: read-write-execute (rwx) so self-modifying code sequences are possible.
 # Data bank: read-write (rw) - load/store data goes here.
-# boot: fixed offset for execution start (0 is allowed). Omit for randomised boot.
+# boot: fixed absolute execution address (0 is allowed). Omit for randomised boot.
 # For a single-RAM linker script, use a one-bank config (e.g. config/memory_single_ram.yaml).
 memory:
-  boot: 0x100
+  boot: 0x80000100
   banks:
     - name: CODE
       base: 0x80000000
       size: 0x40000
       code: true
       data: false
-      access: rx
+      access: rwx
     - name: DATA
       base: 0x80040000
       size: 0x40000

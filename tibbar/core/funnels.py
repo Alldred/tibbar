@@ -62,44 +62,65 @@ class RoundRobinFunnel(FunnelBase):
         ]
         idx = 0
         while active:
-            pos = idx % len(active)
-            producer, it, sequence_id = active[pos]
-            if it is None:
-                # Start this producer
-                if _is_funnel(producer):
-                    it = producer.gen()
-                    active[pos] = (producer, it, None)
-                else:
-                    # Sequence: reserve then gen
-                    requests = getattr(producer, "get_resource_requests", lambda: {})()
-                    if self._reserver and requests:
-                        sid = next(self._sequence_id_counter)
-                        try:
-                            claim = self._reserver.request(sid, requests)
-                        except ReservationError:
-                            idx += 1
-                            continue
-                        if claim is None:
-                            idx += 1
-                            continue
-                        producer.reservation_claim = claim
-
-                        def _gen_with_release(_reserver: Any, _sid: int) -> Iterator[Any]:
-                            try:
-                                yield from producer.gen()
-                            finally:
-                                _reserver.release(_sid)
-
-                        it = _gen_with_release(self._reserver, sid)
-                    else:
-                        producer.reservation_claim = None
+            progressed = False
+            rounds = len(active)
+            for _ in range(rounds):
+                if not active:
+                    break
+                pos = idx % len(active)
+                producer, it, sequence_id = active[pos]
+                if it is None:
+                    # Start this producer
+                    if _is_funnel(producer):
                         it = producer.gen()
-                    active[pos] = (producer, it, None)
+                        active[pos] = (producer, it, None)
+                    else:
+                        # Sequence: reserve then gen
+                        requests = getattr(producer, "get_resource_requests", lambda: {})()
+                        if self._reserver and requests:
+                            sid = next(self._sequence_id_counter)
+                            try:
+                                claim = self._reserver.request(sid, requests)
+                            except ReservationError as e:
+                                msg = (
+                                    f"Invalid resource request from "
+                                    f"{producer.__class__.__name__}: {e}"
+                                )
+                                raise RuntimeError(msg) from e
+                            if claim is None:
+                                idx += 1
+                                continue
+                            producer.reservation_claim = claim
 
-            try:
-                item = next(it)
-                yield item
-                idx += 1
-            except StopIteration:
-                active.pop(pos)
-                idx = 0
+                            def _gen_with_release(
+                                _producer: Any, _reserver: Any, _sid: int
+                            ) -> Iterator[Any]:
+                                try:
+                                    yield from _producer.gen()
+                                finally:
+                                    _reserver.release(_sid)
+
+                            it = _gen_with_release(producer, self._reserver, sid)
+                        else:
+                            producer.reservation_claim = None
+                            it = producer.gen()
+                        active[pos] = (producer, it, None)
+
+                try:
+                    item = next(it)
+                    yield item
+                    progressed = True
+                    idx += 1
+                except StopIteration:
+                    active.pop(pos)
+                    progressed = True
+                    if active:
+                        idx %= len(active)
+                    else:
+                        idx = 0
+
+            if not progressed:
+                raise RuntimeError(
+                    "RoundRobinFunnel cannot make progress: all producers are blocked on"
+                    " reservations."
+                )

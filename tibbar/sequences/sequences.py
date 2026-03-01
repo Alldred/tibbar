@@ -167,11 +167,14 @@ class SetFPRs:
 
     def gen(self) -> object:
         size = 32 * 8
-        base_addr = self.tibbar.mem_store.allocate_data_region(size)
+        base_addr = self.tibbar.allocate_data(size)
         if base_addr is None:
             return
         yield from LoadGPR(
-            self.tibbar, reg_idx=self.base_idx, value=base_addr, name=self.name
+            self.tibbar,
+            reg_idx=self.base_idx,
+            value=base_addr,
+            name=self.name,
         ).gen()
         if "fld" not in self.tibbar.instrs:
             return
@@ -210,17 +213,25 @@ class DefaultProgramStart:
         if mepc_addr is None or mtvec_addr is None:
             raise RuntimeError("Eumos/Lome missing mepc or mtvec CSR")
 
-        # Place after first two start instructions and above 0x100 so we don't collide with boot
-        # when boot is low (e.g. 0xa0 with exit at 0x100).
-        exception_base = self.tibbar.mem_store.allocate(
+        # Place handler away from boot so LoadGPR+CSR setup cannot collide with it.
+        # 0x40 bytes is conservative for current setup sequence expansion.
+        min_start = max(
+            self.tibbar.load_addr + 0x108,
+            int(self.tibbar.boot_address) + 0x40,
+        )
+        exception_base = self.tibbar.allocate_code(
             40,
-            purpose="code",
-            min_start=max(0x108, self.tibbar.boot_address + 8),
+            min_start=min_start,
         )
         assert exception_base is not None, "No space for exception handler"
         self.tibbar.exception_address = exception_base
 
-        yield from LoadGPR(self.tibbar, reg_idx=1, value=exception_base, name=self.name).gen()
+        yield from LoadGPR(
+            self.tibbar,
+            reg_idx=1,
+            value=exception_base,
+            name=self.name,
+        ).gen()
 
         yield GenData(
             seq=self.name,
@@ -290,15 +301,14 @@ class DefaultRelocate:
         min_off, max_off = get_min_max_values(self.tibbar.instrs["jal"])
         pc = self.tibbar.get_current_pc()
         # Target must be empty and have enough space (100 bytes).
-        free_addr = self.tibbar.mem_store.allocate(
+        free_addr = self.tibbar.allocate_code(
             100,
-            purpose="code",
             pc=pc,
             within=(min_off, max_off),
         )
 
         if free_addr is not None and self.tibbar.random.random() > 0.05:
-            offset = free_addr - self.tibbar._pc
+            offset = free_addr - pc
             yield GenData(
                 seq=self.name,
                 data=encode_instr(self.tibbar, "jal", dest=0, imm=offset),
@@ -306,13 +316,13 @@ class DefaultRelocate:
             )
         else:
             if self.mscratch_addr is None:
-                free_addr = self.tibbar.mem_store.allocate(100, purpose="code", pc=self.tibbar._pc)
+                free_addr = self.tibbar.allocate_code(100, pc=pc)
                 if free_addr is None:
                     size = self.tibbar.random.randint(
                         2**6,
                         min(2**20, self.tibbar.mem_store.get_memory_size() - 64),
                     )
-                    base = self.tibbar.mem_store.allocate(size, purpose="code", pc=self.tibbar._pc)
+                    base = self.tibbar.allocate_code(size, pc=pc)
                     assert base is not None, "No space for relocate"
                     if self.tibbar.random.random() < 0.9:
                         offset = self.tibbar.random.randint(0, max(0, size - 48))
@@ -324,7 +334,12 @@ class DefaultRelocate:
                     new_loc = base + offset
                 else:
                     new_loc = free_addr
-                yield from LoadGPR(self.tibbar, reg_idx=1, value=new_loc, name=self.name).gen()
+                yield from LoadGPR(
+                    self.tibbar,
+                    reg_idx=1,
+                    value=new_loc,
+                    name=self.name,
+                ).gen()
                 for _ in range(self.tibbar.random.randint(0, 4)):
                     yield GenData(
                         seq=self.name,
@@ -350,7 +365,7 @@ class DefaultRelocate:
                 comment="csrrw x0, mscratch, x1",
             )
 
-            free_addr = self.tibbar.mem_store.allocate(100, purpose="code", pc=self.tibbar._pc)
+            free_addr = self.tibbar.allocate_code(100, pc=pc)
             if free_addr is not None:
                 new_loc = free_addr
             else:
@@ -358,7 +373,7 @@ class DefaultRelocate:
                     2**6,
                     min(2**20, self.tibbar.mem_store.get_memory_size() - 64),
                 )
-                base = self.tibbar.mem_store.allocate(size, purpose="code", pc=self.tibbar._pc)
+                base = self.tibbar.allocate_code(size, pc=pc)
                 assert base is not None, "No space for relocate"
                 if self.tibbar.random.random() < 0.9:
                     offset = self.tibbar.random.randint(0, max(0, size - 48))
@@ -369,7 +384,12 @@ class DefaultRelocate:
                 offset &= -4
                 new_loc = base + offset
 
-            yield from LoadGPR(self.tibbar, reg_idx=1, value=new_loc, name=self.name).gen()
+            yield from LoadGPR(
+                self.tibbar,
+                reg_idx=1,
+                value=new_loc,
+                name=self.name,
+            ).gen()
 
             for _ in range(self.tibbar.random.randint(0, 4)):
                 yield GenData(
@@ -466,11 +486,14 @@ class StressSingleFPRSourceFloatInstrs:
             return
         src_idx = op_vals.get(src_names[0], 0)
         size = 50 * 8
-        base_addr = self.tibbar.mem_store.allocate_data_region(size)
+        base_addr = self.tibbar.allocate_data(size)
         if base_addr is None:
             return
         yield from LoadGPR(
-            self.tibbar, reg_idx=self.base_idx, value=base_addr, name=self.name
+            self.tibbar,
+            reg_idx=self.base_idx,
+            value=base_addr,
+            name=self.name,
         ).gen()
         load_offset = 0
         f64 = _is_f64_mnemonic(mnemonic)
@@ -540,11 +563,14 @@ class StressMultiFPRSourceFloatInstrs:
         num_srcs = len(src_names)
         selected_idx = self.tibbar.random.randint(0, num_srcs - 1) if num_srcs > 1 else 0
         other_idxs = [i for i in range(num_srcs) if i != selected_idx]
-        base_addr = self.tibbar.mem_store.allocate_data_region(50 * 8)
+        base_addr = self.tibbar.allocate_data(50 * 8)
         if base_addr is None:
             return
         yield from LoadGPR(
-            self.tibbar, reg_idx=self.base_idx, value=base_addr, name=self.name
+            self.tibbar,
+            reg_idx=self.base_idx,
+            value=base_addr,
+            name=self.name,
         ).gen()
         load_offset = 0
         f64 = _is_f64_mnemonic(mnemonic)

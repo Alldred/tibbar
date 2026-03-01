@@ -184,11 +184,29 @@ def test_round_robin_funnel_with_reserver_interleaves():
 
     tibbar = FakeTibbar()
     funnel = RoundRobinFunnel(tibbar, reserver=reserver)
-    funnel.add_sequence(ExampleGPRSequence(tibbar, gpr_index=0))
+    funnel.add_sequence(ExampleGPRSequence(tibbar, gpr_index=1))
     funnel.add_sequence(ExampleSlotSequence(tibbar))
     out = list(funnel.gen())
     assert len(out) >= 1
     assert all(hasattr(g, "data") for g in out)
+
+
+def test_round_robin_funnel_raises_for_invalid_reservation_request():
+    """Invalid reservation requests fail fast instead of spinning forever."""
+    from eumos import Eumos
+
+    space = DictResourceSpace({"GPR": list(range(8))})
+    reserver = Reserver(space)
+    eumos = Eumos()
+
+    class FakeTibbar:
+        instrs = eumos.instructions
+
+    tibbar = FakeTibbar()
+    funnel = RoundRobinFunnel(tibbar, reserver=reserver)
+    funnel.add_sequence(ExampleGPRSequence(tibbar, gpr_index=0))  # x0 is invalid
+    with pytest.raises(RuntimeError, match="Invalid resource request"):
+        list(funnel.gen())
 
 
 def test_eumos_reservable_resources():

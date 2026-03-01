@@ -124,14 +124,58 @@ memory:
         assert banks[1]["access"] == "rw"
         assert banks[2]["access"] == "rwx"
 
-        # First code bank is CODE (rx); first data bank is DATA (rw) -> separate
+        # Code size is the sum of all code banks.
+        # Separate data uses pure data banks (data=true, code=false).
         code_size, load_addr, sep_data, data_base, _ = resolve_memory_from_config(banks)
-        assert code_size == 0x10000
+        assert code_size == 0x10000 + 0x8000
         assert load_addr == 0
         assert sep_data == 0x1000
         assert data_base == 0x10000
     finally:
         path.unlink(missing_ok=True)
+
+
+def test_multi_non_contiguous_banks_resolve_to_absolute_spaces():
+    """Multiple non-contiguous code/data banks resolve with absolute bases and summed sizes."""
+    banks = [
+        {
+            "name": "CODE0",
+            "base": 0x80000000,
+            "size": 0x1000,
+            "code": True,
+            "data": False,
+            "access": "rx",
+        },
+        {
+            "name": "DATA0",
+            "base": 0x90000000,
+            "size": 0x0200,
+            "code": False,
+            "data": True,
+            "access": "rw",
+        },
+        {
+            "name": "CODE1",
+            "base": 0xA0000000,
+            "size": 0x0800,
+            "code": True,
+            "data": False,
+            "access": "rx",
+        },
+        {
+            "name": "DATA1",
+            "base": 0xB0000000,
+            "size": 0x0100,
+            "code": False,
+            "data": True,
+            "access": "rw",
+        },
+    ]
+    code_size, load_addr, sep_data, data_base, _ = resolve_memory_from_config(banks)
+    assert code_size == 0x1800
+    assert load_addr == 0x80000000
+    assert sep_data == 0x300
+    assert data_base == 0x90000000
 
 
 def test_resolve_requires_code_bank():
@@ -263,18 +307,18 @@ def test_default_config_path_exists_and_loads():
     assert path.exists()
     banks, _, boot = load_memory_config(path)
     assert len(banks) >= 1
-    assert boot == 0x100  # default config has boot: 0x100
+    assert boot == 0x80000100  # default config has absolute boot address
     code_size, load_addr, sep_data, data_base, _ = resolve_memory_from_config(banks)
     assert load_addr == 0x80000000
     # Default is two banks: separate code and data
     assert sep_data is not None
     assert data_base is not None
-    assert banks[0].get("access") == "rx"  # instruction bank
+    assert banks[0].get("access") == "rwx"  # instruction bank
     assert banks[1].get("access") == "rw"  # data bank
 
 
 def test_load_boot_from_config():
-    """Optional boot offset is read from config; omitted => None."""
+    """Optional absolute boot address is read from config; omitted => None."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(
             """
@@ -285,13 +329,13 @@ memory:
       size: 0x80000
       code: true
       data: true
-  boot: 0
+  boot: 0x80000000
 """
         )
         path = Path(f.name)
     try:
         _, _, boot = load_memory_config(path)
-        assert boot == 0
+        assert boot == 0x80000000
     finally:
         path.unlink(missing_ok=True)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:

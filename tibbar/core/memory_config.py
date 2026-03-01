@@ -40,10 +40,10 @@ def validate_memory_config(raw: dict[str, Any], path: Path | None = None) -> Non
 
 
 def load_memory_config(path: Path) -> tuple[list[dict[str, Any]], int, int | None]:
-    """Load and validate memory config from YAML. Returns (banks, data_reserve, boot_offset).
+    """Load and validate memory config from YAML. Returns (banks, data_reserve, boot_address).
     Banks have name, base, size, code, data, access. data_reserve is used when code and data
-    share one bank (bytes reserved at end). boot_offset: 0-based offset into code region for
-    execution start; None means randomise boot address.
+    share one bank (bytes reserved at end). boot_address is an absolute execution address;
+    None means randomise boot address.
     """
     import yaml
 
@@ -58,16 +58,16 @@ def load_memory_config(path: Path) -> tuple[list[dict[str, Any]], int, int | Non
     if data_reserve < 1:
         data_reserve = DEFAULT_DATA_RESERVE
     boot_raw = mem.get("boot")
-    boot_offset: int | None = _parse_int(boot_raw) if boot_raw is not None else None
-    if boot_offset is not None and boot_offset < 0:
-        boot_offset = None
+    boot_address: int | None = _parse_int(boot_raw) if boot_raw is not None else None
+    if boot_address is not None and boot_address < 0:
+        boot_address = None
 
     out: list[dict[str, Any]] = []
     for i, b in enumerate(banks_raw):
         name = b.get("name", f"bank{i}")
         base = _parse_int(b.get("base", 0))
         size = _parse_int(b.get("size", 0))
-        code = b.get("code", True)
+        code = b.get("code", False)
         data = b.get("data", False)
         access = b.get("access", "rwx")
         if not isinstance(access, str):
@@ -82,7 +82,7 @@ def load_memory_config(path: Path) -> tuple[list[dict[str, Any]], int, int | Non
                 "access": access.strip().lower(),
             }
         )
-    return (out, data_reserve, boot_offset)
+    return (out, data_reserve, boot_address)
 
 
 def resolve_memory_from_config(
@@ -90,24 +90,29 @@ def resolve_memory_from_config(
 ) -> tuple[int, int, int | None, int | None, list[dict[str, Any]]]:
     """From parsed banks, return (code_region_size, load_addr,
     separate_data_size, data_base, banks).
-    - code_region_size: size of the first code bank (max_size for MemoryStore).
-    - load_addr: base of the first code bank (for ASM header / linker).
-    - separate_data_size: if data in different bank, its size; else None (data at end of code bank).
-    - data_base: if separate data bank, its base address; else None.
+
+    Tibbar uses absolute addresses throughout. These values are used for
+    reporting and region sizing:
+    - code_region_size: total size of all ``code: true`` banks.
+    - load_addr: base of the first code bank (header).
+    - separate_data_size: total size of all pure data banks
+      (``data: true`` and ``code: false``), or None if not present.
+    - data_base: base of the first pure data bank, or None.
     """
     code_banks = [b for b in banks if b.get("code")]
-    data_banks = [b for b in banks if b.get("data")]
+    data_banks = [b for b in banks if b.get("data") and not b.get("code")]
     if not code_banks:
         raise ValueError("At least one bank must have code: true")
     first_code = code_banks[0]
     load_addr = first_code["base"]
-    size = first_code["size"]
+    code_size = sum(int(b["size"]) for b in code_banks)
 
-    if not data_banks or data_banks[0] is first_code:
-        return (size, load_addr, None, None, banks)
+    if not data_banks:
+        return (code_size, load_addr, None, None, banks)
 
     first_data = data_banks[0]
-    return (size, load_addr, first_data["size"], first_data["base"], banks)
+    data_size = sum(int(b["size"]) for b in data_banks)
+    return (code_size, load_addr, data_size, first_data["base"], banks)
 
 
 def get_default_config_path() -> Path:

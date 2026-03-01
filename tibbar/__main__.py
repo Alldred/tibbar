@@ -91,6 +91,7 @@ def main() -> None:
         output=args.output,
         verbosity=args.verbosity,
         memory_config=args.memory_config,
+        record_execution_trace=(args.debug_yaml is not None),
     )
     tibbar.run()
     if args.debug_yaml is not None:

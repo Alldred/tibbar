@@ -58,12 +58,15 @@ class Load:
         data_size_bytes = data_size_bits // 8
         size = max(8, data_size_bytes)
 
-        base_addr = self.tibbar.mem_store.allocate_data_region(size)
+        base_addr = self.tibbar.allocate_data(size)
         if base_addr is None:
             return
 
         yield from LoadGPR(
-            self.tibbar, reg_idx=selected_base, value=base_addr, name=self.name
+            self.tibbar,
+            reg_idx=selected_base,
+            value=base_addr,
+            name=self.name,
         ).gen()
 
         load_data = self.tibbar.random.getrandbits(data_size_bits) & ((1 << data_size_bits) - 1)
@@ -166,12 +169,15 @@ class Store:
         data_size_bytes = data_size_bits // 8
         size = max(8, data_size_bytes)
 
-        base_addr = self.tibbar.mem_store.allocate_data_region(size)
+        base_addr = self.tibbar.allocate_data(size)
         if base_addr is None:
             return
 
         yield from LoadGPR(
-            self.tibbar, reg_idx=selected_base, value=base_addr, name=self.name
+            self.tibbar,
+            reg_idx=selected_base,
+            value=base_addr,
+            name=self.name,
         ).gen()
 
         store_data = self.tibbar.random.getrandbits(data_size_bits) & ((1 << data_size_bits) - 1)

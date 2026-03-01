@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Stuart Alldred.
 
-"""Linear byte-addressed memory store for the ISG."""
+"""Absolute-address memory store for instruction/data placement."""
 
 from __future__ import annotations
 
+import bisect
 import logging
 import random
 from typing import TYPE_CHECKING
@@ -15,13 +16,8 @@ if TYPE_CHECKING:
     from tibbar.testobj import GenData
 
 
-# When using a separate data bank, data addresses live above this offset
-# so they don't collide with code; ASM emit subtracts this for the .data section VMA.
-DATA_VMA_OFFSET = 0x1_0000_0000
-
-
 class MemoryStore:
-    """Linear byte-addressed memory for instruction/data placement."""
+    """Absolute-address memory for instruction/data placement."""
 
     def __init__(
         self,
@@ -30,7 +26,8 @@ class MemoryStore:
         seed: int,
         max_size: int,
         *,
-        separate_data_region_size: int | None = None,
+        code_regions: list[tuple[int, int]] | None = None,
+        data_regions: list[tuple[int, int]] | None = None,
     ) -> None:
         self.random = rng
         self.seed = seed
@@ -38,18 +35,42 @@ class MemoryStore:
         self._gen_store: dict[int, GenData] = {}
         self._live_memory: dict[int, int] = {}
         self._used_ranges: list[tuple[int, int]] = []
-        self._data_region_base: int | None = None
-        self._data_region_size: int = 0
-        self._data_next: int = 0
-        self._separate_data_region = separate_data_region_size is not None
-        self._data_vma_offset = DATA_VMA_OFFSET if separate_data_region_size else 0
+        self._used_starts: list[int] = []
+
+        self._code_regions = self._normalize_regions(code_regions or [(0, max_size)])
+        self._data_regions = self._normalize_regions(data_regions or [])
+
+        self._data_next: list[int] = [lo for lo, _ in self._data_regions]
+        self._data_region_base: int | None = (
+            self._data_regions[0][0] if self._data_regions else None
+        )
+        self._data_region_size: int = sum(hi - lo for lo, hi in self._data_regions)
+        self._log = log
+
         self.debug = log.debug
         self.info = log.info
         self.warning = log.warning
         self.error = log.error
 
+    def _normalize_regions(self, regions: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        out: list[tuple[int, int]] = []
+        for lo, hi in regions:
+            lo_i = int(lo)
+            hi_i = int(hi)
+            if hi_i <= lo_i:
+                continue
+            out.append((lo_i, hi_i))
+        out.sort(key=lambda r: r[0])
+        return out
+
     def get_memory_size(self) -> int:
         return self._max_size
+
+    def get_code_regions(self) -> list[tuple[int, int]]:
+        return list(self._code_regions)
+
+    def get_data_regions(self) -> list[tuple[int, int]]:
+        return list(self._data_regions)
 
     def _normalize_pc(self, pc: int | object) -> int:
         if isinstance(pc, int):
@@ -68,81 +89,119 @@ class MemoryStore:
             else:
                 merged.append((s, e))
         self._used_ranges = merged
+        self._used_starts = [s for s, _ in self._used_ranges]
+
+    def _range_overlaps_used(self, addr: int, size: int) -> bool:
+        if not self._used_ranges:
+            return False
+        end = addr + size
+        # Find first interval with start >= end; only previous interval can overlap.
+        idx = bisect.bisect_left(self._used_starts, end)
+        if idx == 0:
+            return False
+        _s, e = self._used_ranges[idx - 1]
+        return e > addr
+
+    def _in_regions(self, regions: list[tuple[int, int]], addr: int, size: int) -> bool:
+        end = addr + size
+        for lo, hi in regions:
+            if lo <= addr and end <= hi:
+                return True
+        return False
+
+    def _is_valid_range(self, addr: int, size: int) -> bool:
+        if addr < 0 or size <= 0:
+            return False
+        if self._in_regions(self._code_regions, addr, size):
+            return True
+        if self._in_regions(self._data_regions, addr, size):
+            return True
+        return False
 
     def check_region_empty(self, addr: int, byte_size: int) -> bool:
         """True iff [addr, addr+byte_size) does not overlap any existing _gen_store item."""
-        if addr < 0 or byte_size <= 0 or addr + byte_size > self._max_size:
+        if not self._is_valid_range(addr, byte_size):
             return False
-        end = addr + byte_size
-        for s, item in self._gen_store.items():
-            item_size = getattr(item, "byte_size", 4)
-            e = s + item_size
-            if not (end <= s or addr >= e):
-                return False
-        return True
+        return not self._range_overlaps_used(addr, byte_size)
 
-    def _code_region_end(self) -> int:
-        """End of code region: for single bank, data base; for multi-bank, max_size."""
-        if self._data_region_base is not None and not self._separate_data_region:
-            return self._data_region_base
-        return self._max_size
-
-    def _find_gap_in_region(
+    def _iter_code_candidates(
         self,
+        *,
         min_size: int,
         align: int,
-        pc_addr: int,
+        pc_addr: int | None,
         min_start: int | None,
         within: tuple[int, int] | None,
-        region_end: int | None,
-    ) -> int | None:
-        """Find one gap in [0, region_end) (or [0, _max_size) if region_end is None).
-
-        Returns a block with at least min_size bytes, or None.
-        """
-        gaps: list[tuple[int, int]] = []
-        prev_end = 0
-        effective_max = self._max_size if region_end is None else min(self._max_size, region_end)
-        for s, e in self._used_ranges:
-            if s > prev_end:
-                gap_end = min(s, effective_max)
-                if gap_end > prev_end:
-                    gaps.append((prev_end, gap_end))
-            prev_end = max(prev_end, e)
-        if prev_end < effective_max:
-            gaps.append((prev_end, effective_max))
-
+    ) -> list[int]:
         candidates: list[int] = []
-        for gap_start, gap_end in gaps:
-            if gap_end - gap_start < min_size:
+        seen: set[int] = set()
+
+        def _add_candidate(cand: int) -> None:
+            if cand not in seen:
+                seen.add(cand)
+                candidates.append(cand)
+
+        used = self._used_ranges
+        for lo_raw, hi_raw in self._code_regions:
+            lo = lo_raw
+            hi = hi_raw
+            if min_start is not None:
+                lo = max(lo, int(min_start))
+            if within is not None and pc_addr is not None:
+                min_off, max_off = within
+                lo = max(lo, int(pc_addr) + int(min_off))
+                hi = min(hi, int(pc_addr) + int(max_off) + 1)
+            if hi - lo < min_size:
                 continue
-            aligned_start = (gap_start + align - 1) & -align
-            if within is not None:
-                if aligned_start + min_size <= gap_end:
-                    min_off, max_off = within
-                    lo = max(aligned_start, pc_addr + min_off)
-                    hi = min(gap_end - min_size, pc_addr + max_off)
-                    if lo <= hi:
-                        cand = (lo + align - 1) & -align
-                        if cand + min_size <= gap_end and cand <= hi:
-                            candidates.append(cand)
-            else:
-                start_cand = aligned_start
-                if min_start is not None and aligned_start < min_start:
-                    start_cand = (min_start + align - 1) & -align
-                if start_cand + min_size <= gap_end:
-                    candidates.append(start_cand)
-                    hi = gap_end - min_size
-                    if hi > start_cand:
-                        near = max(start_cand, min(hi, pc_addr))
-                        near = (near + align - 1) & -align
-                        if start_cand <= near <= hi and near not in candidates:
-                            candidates.append(near)
-        if min_start is not None:
-            candidates = [c for c in candidates if c >= min_start]
-        if not candidates:
-            return None
-        return self.random.choice(candidates)
+            last = hi - min_size
+            if last < lo:
+                continue
+
+            # Build free gaps for [lo, last + min_size) from merged used ranges.
+            gap_lo = lo
+            window_end = last + min_size
+
+            # Start near first potentially overlapping used range.
+            idx = bisect.bisect_left(self._used_starts, lo)
+            if idx > 0 and used[idx - 1][1] > lo:
+                idx -= 1
+
+            while idx < len(used):
+                s, e = used[idx]
+                if s >= window_end:
+                    break
+                if e <= gap_lo:
+                    idx += 1
+                    continue
+                gap_hi = min(s, window_end)
+                if gap_hi - gap_lo >= min_size:
+                    cand_lo = (gap_lo + align - 1) & -align
+                    cand_hi = gap_hi - min_size
+                    if cand_lo <= cand_hi:
+                        _add_candidate(cand_lo)
+                        if pc_addr is not None:
+                            near = (max(cand_lo, min(cand_hi, pc_addr)) + align - 1) & -align
+                            if near > cand_hi:
+                                near = ((cand_hi // align) * align) if align > 1 else cand_hi
+                            if cand_lo <= near <= cand_hi:
+                                _add_candidate(near)
+                gap_lo = max(gap_lo, e)
+                idx += 1
+
+            if gap_lo < window_end:
+                gap_hi = window_end
+                if gap_hi - gap_lo >= min_size:
+                    cand_lo = (gap_lo + align - 1) & -align
+                    cand_hi = gap_hi - min_size
+                    if cand_lo <= cand_hi:
+                        _add_candidate(cand_lo)
+                        if pc_addr is not None:
+                            near = (max(cand_lo, min(cand_hi, pc_addr)) + align - 1) & -align
+                            if near > cand_hi:
+                                near = ((cand_hi // align) * align) if align > 1 else cand_hi
+                            if cand_lo <= near <= cand_hi:
+                                _add_candidate(near)
+        return candidates
 
     def allocate(
         self,
@@ -153,58 +212,83 @@ class MemoryStore:
         min_start: int | None = None,
         within: tuple[int, int] | None = None,
     ) -> int | None:
-        """Allocate a block: code in code region, data in data region.
+        """Allocate a block in absolute space.
 
         Returns base address or None. When within= is set, pc is the current PC
         used to compute the valid target range [pc+min_off, pc+max_off].
         """
         if purpose == "data":
-            if self._data_region_base is None:
+            if not self._data_regions:
                 self.reserve_data_region(256 * 1024, align=align)
-            assert self._data_region_base is not None
-            addr = (self._data_next + align - 1) & -align
-            end = addr + min_size
-            if end > self._data_region_base + self._data_region_size:
+            if not self._data_regions:
                 return None
-            self._data_next = end
-            return addr
+            for idx, (lo, hi) in enumerate(self._data_regions):
+                addr = (self._data_next[idx] + align - 1) & -align
+                end = addr + min_size
+                if end <= hi:
+                    self._data_next[idx] = end
+                    return addr
+            return None
 
         # purpose == "code"
-        region_end = self._code_region_end()
-        pc_addr = self._normalize_pc(pc) if pc is not None else 0
-        base = self._find_gap_in_region(min_size, align, pc_addr, min_start, within, region_end)
-        if base is None and pc_addr != 0:
-            base = self._find_gap_in_region(min_size, align, 0, min_start, within, region_end)
-        if base is None:
+        pc_addr = self._normalize_pc(pc) if pc is not None else None
+        candidates = self._iter_code_candidates(
+            min_size=min_size,
+            align=align,
+            pc_addr=pc_addr,
+            min_start=min_start,
+            within=within,
+        )
+        if not candidates and pc_addr is not None:
+            candidates = self._iter_code_candidates(
+                min_size=min_size,
+                align=align,
+                pc_addr=None,
+                min_start=min_start,
+                within=within,
+            )
+        if not candidates:
             return None
+        if pc_addr is None:
+            base = self.random.choice(candidates)
+        else:
+            candidates.sort(key=lambda c: abs(c - pc_addr))
+            near = candidates[: min(64, len(candidates))]
+            base = self.random.choice(near)
         self._insert_used_range(base, base + min_size)
         return base
 
     def get_free_space(self, pc: int | object) -> int:
         pc_addr = self._normalize_pc(pc)
-        if pc_addr >= self._max_size:
+        seg: tuple[int, int] | None = None
+        for lo, hi in self._code_regions:
+            if lo <= pc_addr < hi:
+                seg = (lo, hi)
+                break
+        if seg is None:
             return 0
-        region_end = self._code_region_end()
-        if pc_addr >= region_end:
-            return 0
-        for s, e in self._used_ranges:
-            if s > pc_addr:
-                free = s - pc_addr
-                return min(free, region_end - pc_addr)
-            if e > pc_addr:
-                return 0
-        return min(self._max_size - pc_addr, region_end - pc_addr)
+        _seg_lo, seg_hi = seg
 
-    def compact_and_return(self) -> dict[int, object]:
+        nearest_next = seg_hi
+        for s, item in self._gen_store.items():
+            item_size = getattr(item, "byte_size", 4)
+            e = s + item_size
+            if s <= pc_addr < e:
+                return 0
+            if pc_addr < s < nearest_next:
+                nearest_next = s
+        return nearest_next - pc_addr
+
+    def export_and_return(self) -> dict[int, object]:
+        """Return placed memory items keyed by absolute address."""
         output: dict[int, object] = {}
         for addr, item in self._gen_store.items():
             output[addr] = item.export_to_tibbar_item()
         return output
 
     def read_from_mem_store(self, addr: int, size: int = 8) -> int:
-        assert 0 <= addr < self._max_size, f"Address out of range: {addr=}"
-        assert addr + size <= self._max_size, f"Access past end: {addr}+{size}"
         assert size <= 8, f"Not expecting size over 8 bytes: {size=}"
+        assert self._is_valid_range(addr, size), f"Address out of range: {addr=}, {size=}"
         dword = 0
         for byte in range(size):
             byte_data = self._live_memory.get(addr + byte, 0)
@@ -221,7 +305,12 @@ class MemoryStore:
         data: int,
         strobe: int = MASK_64_BIT,
     ) -> None:
-        assert 0 <= addr < self._max_size, f"Address out of range: {addr=}"
+        max_byte = 0
+        for i in range(8):
+            if (strobe >> (i * 8)) & 0xFF:
+                max_byte = i + 1
+        required = max(max_byte, 1)
+        assert self._is_valid_range(addr, required), f"Address out of range: {addr=}"
         for i in range(8):
             if (strobe >> (i * 8)) & 0xFF:
                 self._live_memory[addr + i] = (data >> (8 * i)) & 0xFF
@@ -235,8 +324,11 @@ class MemoryStore:
         if not isinstance(addr, int):
             addr = getattr(addr, "address", addr)
 
-        free = self.get_free_space(addr)
-        self.debug(f"Adding to mem_store: 0x{addr:x}: {test_obj} (free until next: {free} bytes)")
+        if self._log.isEnabledFor(logging.DEBUG):
+            free = self.get_free_space(addr)
+            self.debug(
+                f"Adding to mem_store: 0x{addr:x}: {test_obj} (free until next: {free} bytes)"
+            )
 
         if test_obj.ldst_data is not None:
             ldst_addr = test_obj.ldst_addr
@@ -258,8 +350,18 @@ class MemoryStore:
                 )
             )
 
-        memory_empty = self.check_region_empty(addr, test_obj.byte_size)
-        assert memory_empty, f"0x{addr:x} is already in use"
+        # add_to_mem_store writes concrete objects; allow pre-reserved ranges and
+        # only reject overlap with already populated objects.
+        end = addr + test_obj.byte_size
+        for s, item in self._gen_store.items():
+            item_size = getattr(item, "byte_size", 4)
+            e = s + item_size
+            if not (end <= s or addr >= e):
+                raise AssertionError(
+                    f"0x{addr:x} is already in use "
+                    f"(new={getattr(test_obj, 'seq', None)}:{getattr(test_obj, 'comment', None)} "
+                    f"existing={getattr(item, 'seq', None)}:{getattr(item, 'comment', None)})"
+                )
 
         self._gen_store[addr] = test_obj
         self._insert_used_range(addr, addr + test_obj.byte_size)
@@ -284,10 +386,7 @@ class MemoryStore:
         min_start: int | None = None,
         pc: int | object | None = None,
     ) -> int | None:
-        """Find a free block in code region, mark it used, return base.
-
-        Thin wrapper around allocate(..., purpose="code").
-        """
+        """Find a free block in code region, mark it used, return base."""
         return self.allocate(
             min_size=size,
             align=align,
@@ -297,43 +396,41 @@ class MemoryStore:
         )
 
     def reserve_data_region(self, size: int, align: int = 8) -> None:
-        """Reserve a contiguous region for loadable data. Call once at init.
-        If separate_data_region_size was set, data lives at DATA_VMA_OFFSET and does not
-        consume code space; otherwise data is at the end of the code space.
+        """Reserve data regions.
+
+        Separate mode:
+        - If explicit data regions exist, they are used as-is.
+        Unified mode:
+        - Reserve from the tail of the last code region.
         """
-        if self._data_region_base is not None:
+        if self._data_regions:
+            self._data_region_base = self._data_regions[0][0]
+            self._data_region_size = sum(hi - lo for lo, hi in self._data_regions)
+            self._data_next = [lo for lo, _ in self._data_regions]
+            if size > self._data_region_size:
+                raise AssertionError("Configured data banks smaller than requested reserve")
             return
-        if self._separate_data_region:
-            self._data_region_base = DATA_VMA_OFFSET
-            self._data_region_size = size
-            self._data_next = DATA_VMA_OFFSET
-        else:
-            base = (self._max_size - size) & -align
-            if base < 0:
-                raise AssertionError("No space for data region")
-            self._data_region_base = base
-            self._data_region_size = size
-            self._data_next = base
-            self._insert_used_range(base, base + size)
+
+        if not self._code_regions:
+            raise AssertionError("No code regions available for unified data reserve")
+        lo, hi = self._code_regions[-1]
+        base = (hi - size) & -align
+        if base < lo:
+            raise AssertionError("No space for data region")
+        self._data_regions = [(base, base + size)]
+        self._data_region_base = base
+        self._data_region_size = size
+        self._data_next = [base]
+        self._insert_used_range(base, base + size)
 
     def get_data_region_base(self) -> int | None:
-        """Return the start of the reserved data region, or None if not reserved."""
+        """Return the first reserved data region base, or None if not reserved."""
         return self._data_region_base
 
     def get_data_region_size(self) -> int:
-        """Return the size of the reserved data region (0 if not reserved)."""
+        """Return total size of reserved data regions (0 if not reserved)."""
         return self._data_region_size
 
     def allocate_data_region(self, size: int, align: int = 8) -> int | None:
-        """Allocate from the reserved data region.
-
-        Thin wrapper around allocate(..., purpose="data").
-        """
+        """Allocate from reserved data regions."""
         return self.allocate(min_size=size, align=align, purpose="data")
-
-    def get_data_vma_offset(self) -> int:
-        """Offset to subtract from data addresses when emitting .data.
-
-        Returns 0 or DATA_VMA_OFFSET.
-        """
-        return self._data_vma_offset if self._separate_data_region else 0

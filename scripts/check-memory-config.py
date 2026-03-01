@@ -38,7 +38,7 @@ def main() -> int:
         else:
             print(f"  data reserve (same bank): {data_reserve} bytes")
         if boot is not None:
-            print(f"  boot (offset): 0x{boot:x}")
+            print(f"  boot (absolute): 0x{boot:x}")
         else:
             print("  boot: random")
         return 0
