@@ -8,7 +8,7 @@ from eumos.instance import InstructionInstance
 from tibbar.testobj import GenData
 
 from .base_constraint import BaseConstraint
-from .sequences import SetFPRs, SetGPRs
+from .sequences import SetGPRs
 
 
 class RandomInstrs(BaseConstraint):
@@ -91,7 +91,7 @@ class RandomInstrs(BaseConstraint):
     def gen(self) -> object:
         for _ in range(self.length):
             if _ % 100 == 0:
-                yield from SetFPRs(self.tibbar).gen()
+                # yield from SetFPRs(self.tibbar).gen()
                 yield from SetGPRs(self.tibbar).gen()
 
             mnemonic = self.random.choice(self._i_only)
