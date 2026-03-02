@@ -180,7 +180,7 @@ wheels = [
 [[package]]
 name = "lome"
 version = "0.1.0"
-source = { git = "ssh://git@github.com/Alldred/lome.git#88140eccc711f9636bf545be7177c70cfa859089" }
+source = { git = "ssh://git@github.com/Alldred/lome.git#bf419910ec6e1f5f66896f953c5e9c86672149c8" }
 dependencies = [
     { name = "eumos" },
 ]
