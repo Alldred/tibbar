@@ -3,6 +3,7 @@
 
 """Tests for Tibbar ISG."""
 
+import re
 import tempfile
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import pytest
 
 from tibbar.core.generator_base import GeneratorBase
 from tibbar.core.tibbar import Tibbar
+from tibbar.test_suites import simple as simple_suite
 from tibbar.testobj import GenData
 
 
@@ -31,6 +33,21 @@ class _EscapingJalrGenerator:
         yield GenData(data=0x3A00009B, seq="Unit", comment="addiw x1, x0, 928")
         # jalr x0, 0(x1)  -> jumps to 0x3a0 absolute (outside high code bank)
         yield GenData(data=0x00008067, seq="Unit", comment="jalr x0, 0(x1)")
+
+
+class _LinearSelfLoopGenerator:
+    """Deterministic linear block ending in a self-loop jal exit."""
+
+    def __init__(self, tibbar: Tibbar) -> None:
+        self.tibbar = tibbar
+        self.relocate_sequence = _NoRelocate()
+
+    def gen(self):
+        yield GenData(data=0x00100093, seq="Unit", comment="addi x1, x0, 1")
+        yield GenData(data=0x00200113, seq="Unit", comment="addi x2, x0, 2")
+        yield GenData(data=0x00300193, seq="Unit", comment="addi x3, x0, 3")
+        # jal x0, 0 (self loop => exit)
+        yield GenData(data=0x0000006F, seq="Unit", comment="jal x0, 0")
 
 
 def test_tibbar_runs_and_produces_asm():
@@ -59,6 +76,38 @@ def test_tibbar_runs_and_produces_asm():
         assert "DATA0" in ld_content
         assert "CODE0 (rwx)" in ld_content
         assert "DATA0 (rw)" in ld_content
+
+
+def test_tibbar_asm_emits_sparse_runtime_addresses():
+    """ASM emits runtime addresses only at block starts, not every instruction line."""
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "test.S"
+        tibbar = Tibbar(
+            generator_factory=lambda t: _LinearSelfLoopGenerator(t),
+            seed=123,
+            output=out,
+            verbosity="error",
+        )
+        tibbar.run()
+        content = out.read_text()
+        assert "# @0x" in content
+        assert content.count("# @0x") == 1
+        assert " # 0x" not in content
+
+
+def test_tibbar_asm_labels_only_actual_branch_targets():
+    """Only branch/jump targets are labelled; linear instructions stay unlabeled."""
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "test.S"
+        tibbar = Tibbar(
+            generator_factory=lambda t: _LinearSelfLoopGenerator(t),
+            seed=456,
+            output=out,
+            verbosity="error",
+        )
+        tibbar.run()
+        labels = re.findall(r"^\.L_tgt_[0-9a-f]+:$", out.read_text(), flags=re.MULTILINE)
+        assert len(labels) <= 2
 
 
 def test_tibbar_default_memory_config():
@@ -481,3 +530,26 @@ def test_cli_requires_generator():
     finally:
         sys.argv = old_argv
         sys.stderr = old_stderr
+
+
+def test_simple_suite_scaled_for_longer_runs():
+    """Simple suite emits 10x-ish larger funnels to extend downstream runtime."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tibbar = Tibbar(
+            generator_factory=lambda t: simple_suite.Generator(t),
+            seed=7,
+            output=Path(tmp) / "test.S",
+            verbosity="error",
+        )
+        seq_names = [type(seq).__name__ for seq in tibbar.generator.main_funnel._seqs]
+        assert seq_names.count("RandomSafeInstrs") == 26
+        assert seq_names.count("RelativeBranching") == 25
+        first_seq = tibbar.generator.main_funnel._seqs[0]
+        assert type(first_seq).__name__ == "RandomSafeInstrs"
+        assert first_seq.length == 6000
+        random_lengths = [
+            seq.length
+            for seq in tibbar.generator.main_funnel._seqs[1:]
+            if type(seq).__name__ == "RandomSafeInstrs"
+        ]
+        assert all(1 <= length <= 100 for length in random_lengths)
