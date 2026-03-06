@@ -664,9 +664,24 @@ class Tibbar:
             lines.append(f"# Exit: 0x{self.exit_address:x}")
         lines.append("")
 
+        def _emit_sparse_addr_comment(
+            runtime_addr: int,
+            *,
+            prev_runtime_addr: int | None,
+            prev_size: int | None,
+        ) -> None:
+            contiguous = (
+                prev_runtime_addr is not None
+                and prev_size is not None
+                and runtime_addr == prev_runtime_addr + prev_size
+            )
+            if not contiguous:
+                lines.append(f"  # @0x{runtime_addr:016x}")
+
         # Ensure every branch/jal target has an instruction (insert nop if missing, e.g. from
         # random allocator choosing a target that was never filled).
         code_addrs = {addr for addr, _ in code_items}
+        branch_target_addrs: set[int] = set()
         _BRANCH_JAL = ("jal", "beq", "bne", "blt", "bge", "bltu", "bgeu")
         _NOP_ENC = 0x00000013  # addi x0, x0, 0
         placeholder = type("_Placeholder", (), {"data": _NOP_ENC, "byte_size": 4})()
@@ -688,13 +703,16 @@ class Tibbar:
                     except ValueError:
                         # Unmappable targets are outside configured code banks.
                         continue
+                    branch_target_addrs.add(target)
                     if target not in code_addrs:
                         code_items.append((target, placeholder))
                         code_addrs.add(target)
             except Exception:
                 pass
         code_items.sort(key=lambda x: x[0])
-        branch_targets_with_code = {addr: f".L_tgt_{addr:x}" for addr in code_addrs}
+        branch_targets_with_code = {
+            addr: f".L_tgt_{addr:x}" for addr in sorted(branch_target_addrs) if addr in code_addrs
+        }
 
         # .text.bankN: code only, emitted at per-bank section offsets.
         code_by_bank: dict[int, list[tuple[int, object]]] = {}
@@ -712,6 +730,8 @@ class Tibbar:
             lines.append("  .align 2")
             lines.append("")
             location = 0
+            prev_runtime_addr: int | None = None
+            prev_size: int | None = None
             for addr, item in sorted(code_by_bank[bank_idx], key=lambda x: x[0]):
                 val = getattr(item, "data", 0) or 0
                 byte_size = item.byte_size
@@ -719,6 +739,8 @@ class Tibbar:
                 runtime_addr = addr
                 if section_addr > location:
                     lines.append(f"  .org 0x{section_addr:08x}")
+                    prev_runtime_addr = None
+                    prev_size = None
                 location = section_addr + byte_size
                 if self.boot_address is not None and addr == self.boot_address:
                     lines.append("_start:")
@@ -727,6 +749,11 @@ class Tibbar:
                     lines.append("_exit:")
                 if addr in branch_targets_with_code:
                     lines.append(f"{branch_targets_with_code[addr]}:")
+                _emit_sparse_addr_comment(
+                    runtime_addr,
+                    prev_runtime_addr=prev_runtime_addr,
+                    prev_size=prev_size,
+                )
                 if byte_size == 4:
                     try:
                         inst = self.decoder.from_opc(val & 0xFFFFFFFF, pc=runtime_addr)
@@ -756,11 +783,13 @@ class Tibbar:
                                             asm = f"{mnemonic} {', '.join(rest_parts)}"
                     except Exception:
                         asm = f".word 0x{val:08x}"
-                    lines.append(f"  {asm}  # 0x{runtime_addr:016x}")
+                    lines.append(f"  {asm}")
                 elif byte_size == 8:
-                    lines.append(f"  .dword 0x{val:016x}  # 0x{runtime_addr:016x}")
+                    lines.append(f"  .dword 0x{val:016x}")
                 else:
-                    lines.append(f"  .word 0x{val & 0xFFFFFFFF:08x}  # 0x{runtime_addr:016x}")
+                    lines.append(f"  .word 0x{val & 0xFFFFFFFF:08x}")
+                prev_runtime_addr = runtime_addr
+                prev_size = byte_size
             lines.append("")
 
         # .data.bankN: loadable data only.
@@ -778,6 +807,8 @@ class Tibbar:
                     lines.append("  .align 8")
                     lines.append("")
                     location = 0
+                    prev_runtime_addr = None
+                    prev_size = None
                     for addr, item in sorted(data_by_bank[bank_idx], key=lambda x: x[0]):
                         val = getattr(item, "data", 0) or 0
                         byte_size = item.byte_size
@@ -785,13 +816,20 @@ class Tibbar:
                         runtime_addr = addr
                         if section_addr > location:
                             lines.append(f"  .org 0x{section_addr:08x}")
+                            prev_runtime_addr = None
+                            prev_size = None
                         location = section_addr + byte_size
+                        _emit_sparse_addr_comment(
+                            runtime_addr,
+                            prev_runtime_addr=prev_runtime_addr,
+                            prev_size=prev_size,
+                        )
                         if byte_size == 8:
-                            lines.append(f"  .dword 0x{val:016x}  # 0x{runtime_addr:016x}")
+                            lines.append(f"  .dword 0x{val:016x}")
                         else:
-                            lines.append(
-                                f"  .word 0x{val & 0xFFFFFFFF:08x}  # 0x{runtime_addr:016x}"
-                            )
+                            lines.append(f"  .word 0x{val & 0xFFFFFFFF:08x}")
+                        prev_runtime_addr = runtime_addr
+                        prev_size = byte_size
                     lines.append("")
             else:
                 # Unified mode: data is at end of the last code bank. With multiple
@@ -803,6 +841,8 @@ class Tibbar:
                 lines.append("  .align 8")
                 lines.append("")
                 location = 0
+                prev_runtime_addr = None
+                prev_size = None
                 for addr, item in sorted(data_items, key=lambda x: x[0]):
                     val = getattr(item, "data", 0) or 0
                     byte_size = item.byte_size
@@ -810,11 +850,20 @@ class Tibbar:
                     runtime_addr = addr
                     if section_addr > location:
                         lines.append(f"  .org 0x{section_addr:08x}")
+                        prev_runtime_addr = None
+                        prev_size = None
                     location = section_addr + byte_size
+                    _emit_sparse_addr_comment(
+                        runtime_addr,
+                        prev_runtime_addr=prev_runtime_addr,
+                        prev_size=prev_size,
+                    )
                     if byte_size == 8:
-                        lines.append(f"  .dword 0x{val:016x}  # 0x{runtime_addr:016x}")
+                        lines.append(f"  .dword 0x{val:016x}")
                     else:
-                        lines.append(f"  .word 0x{val & 0xFFFFFFFF:08x}  # 0x{runtime_addr:016x}")
+                        lines.append(f"  .word 0x{val & 0xFFFFFFFF:08x}")
+                    prev_runtime_addr = runtime_addr
+                    prev_size = byte_size
                 lines.append("")
 
         with open(self.output, "w") as f:
