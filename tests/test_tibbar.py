@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from tibbar import get_suite_names
 from tibbar.core.generator_base import GeneratorBase
 from tibbar.core.tibbar import Tibbar
 from tibbar.test_suites import simple as simple_suite
@@ -553,3 +554,11 @@ def test_simple_suite_scaled_for_longer_runs():
             if type(seq).__name__ == "RandomSafeInstrs"
         ]
         assert all(1 <= length <= 100 for length in random_lengths)
+
+
+def test_get_suite_names_exposes_known_suite_entries():
+    """Public API exposes available tibbar suite names."""
+    suite_names = get_suite_names()
+    assert "simple" in suite_names
+    assert "ldst" in suite_names
+    assert "rel_branching" in suite_names
