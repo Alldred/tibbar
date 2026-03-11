@@ -7,18 +7,8 @@ import importlib
 import sys
 from pathlib import Path
 
+from tibbar import TEST_SUITE_NAMES
 from tibbar.core.tibbar import Tibbar
-
-# Named test suites (tibbar.test_suites.<name>.Generator)
-TEST_SUITE_NAMES = (
-    "ldst",
-    "rel_branching",
-    "simple",
-    "float",
-    "stress_float",
-    "hazard",
-    "ldst_exception",
-)
 
 
 def get_generator_from_suite(name: str):
