@@ -24,6 +24,16 @@ A **sequence** is something that yields **GenData**: instructions or data to be 
 - **SetFPRs** — Set FPRs 0–31 with float values from a data region (FloatGen + FLD).
 - **RelativeBranching** — Relative branches (e.g. conditional branches, jumps).
 - **AbsoluteBranching** — JALR (or similar) to a suitable code address.
+- **DirectedALUEdges** — Directed ALU edge patterns for add/sub/logic and immediate variants.
+- **DirectedShiftEdges** — Shift tests at boundary shift amounts and sign-sensitive values.
+- **DirectedComparePairs** — Signed/unsigned compare pairs where outcomes diverge.
+- **BranchOutcomeControlled** — Branches with controlled taken and not-taken cases.
+- **JalJalrLinkCheck** — JAL/JALR control-transfer and link-register patterns.
+- **LoadSignZeroExtend** — Directed load values to exercise sign/zero extension behavior.
+- **StoreLoadRoundTrip** — Store-then-load round-trip patterns across widths.
+- **ImmBoundarySweep** — Immediate boundary sweeps for I/U-immediate instruction families.
+- **X0InvariantStress** — Repeated attempts to write x0 through multiple instruction forms.
+- **LongDependencyChains** — Long RAW-heavy integer dependency chains.
 - **DefaultProgramStart** / **DefaultProgramEnd** — Emit the program prologue and exit block.
 - **DefaultRelocate** — Emit code to relocate execution when space runs out.
 - **StressSingleFPRSourceFloatInstrs** / **StressMultiFPRSourceFloatInstrs** — Stress float instructions with systematic or random float inputs (FloatGen + FLD from data region).

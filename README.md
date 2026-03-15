@@ -36,6 +36,11 @@ You must pass `--generator` / `-g` with one of these built-in suite names:
 | `rel_branching`  | Short instruction bursts and branches                    |
 | `float`          | Float-oriented: RandomFloatInstrs + relative branching     |
 | `stress_float`   | Stress float: safe integer sequences (float stress in funnel) |
+| `i_alu`          | Directed RV-I ALU/shift/compare/immediate edge cases       |
+| `i_control`      | Directed RV-I branch outcomes and JAL/JALR link behavior   |
+| `i_memory`       | Directed RV-I load extension and store/load round-trip cases |
+| `i_invariants`   | RV-I x0-invariant and long dependency-chain stress          |
+| `i_mixed`        | Balanced RV-I mix of directed ALU/control/memory/invariants |
 | `hazard`         | Hazard-focused: SetGPRs, Hazards, Load/Store, RandomSafeInstrs |
 | `ldst_exception` | Load/store with faults: LoadException + Store + branching |
 
