@@ -11,6 +11,11 @@ TEST_SUITE_NAMES = (
     "stress_float",
     "hazard",
     "ldst_exception",
+    "i_alu",
+    "i_control",
+    "i_memory",
+    "i_invariants",
+    "i_mixed",
 )
 
 

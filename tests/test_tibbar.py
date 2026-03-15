@@ -562,3 +562,8 @@ def test_get_suite_names_exposes_known_suite_entries():
     assert "simple" in suite_names
     assert "ldst" in suite_names
     assert "rel_branching" in suite_names
+    assert "i_alu" in suite_names
+    assert "i_control" in suite_names
+    assert "i_memory" in suite_names
+    assert "i_invariants" in suite_names
+    assert "i_mixed" in suite_names

@@ -16,7 +16,7 @@ uv run python -m tibbar --generator <name> [options]
 
 | Option | Short | Description |
 |--------|--------|--------------|
-| `--generator` | `-g` | Test suite name. Required. One of: `ldst`, `rel_branching`, `simple`, `float`, `stress_float`, `hazard`, `ldst_exception`. |
+| `--generator` | `-g` | Test suite name. Required. One of: `ldst`, `rel_branching`, `simple`, `float`, `stress_float`, `hazard`, `ldst_exception`, `i_alu`, `i_control`, `i_memory`, `i_invariants`, `i_mixed`. |
 
 If you omit `--generator`, Tibbar exits with an error and prints an example, e.g.:
 

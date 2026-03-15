@@ -11,6 +11,11 @@ A **generator** is a test suite: it defines which **sequences** run and in what 
 | `rel_branching`   | Lots of relative branching with short bursts of random safe instructions. |
 | `float`           | Float-oriented: RandomFloatInstrs (F-extension) and relative branching. |
 | `stress_float`    | Stress float: safe integer and float stress sequences. |
+| `i_alu`           | Directed RV-I ALU/shift/compare/immediate edge-case coverage. |
+| `i_control`       | Directed RV-I branch outcomes and JAL/JALR link behavior. |
+| `i_memory`        | Directed RV-I load extension plus store/load round-trip patterns. |
+| `i_invariants`    | RV-I x0-invariant stress and long integer dependency chains. |
+| `i_mixed`         | Balanced RV-I blend across ALU, control, memory, and invariants. |
 | `hazard`          | Hazard-focused: SetGPRs, Hazards (GPR data-hazard pairs), Load/Store, RandomSafeInstrs. |
 | `ldst_exception`  | Load/store with faults: LoadException (load from x0 to trigger fault) + Store + branching. |
 
