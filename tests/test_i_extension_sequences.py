@@ -97,6 +97,8 @@ def test_x0_invariant_stress_smoke() -> None:
     out = list(X0InvariantStress(tibbar).gen())
     emitted = [g for g in out if getattr(g, "seq", None) == "X0InvariantStress"]
     assert emitted
+    ldst_addrs = [g.ldst_addr for g in emitted if getattr(g, "ldst_data", None) is not None]
+    assert len(ldst_addrs) == len(set(ldst_addrs))
     hits_x0 = []
     for g in emitted:
         inst = tibbar.decoder.from_opc(int(g.data) & 0xFFFF_FFFF, pc=0)

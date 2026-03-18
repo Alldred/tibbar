@@ -432,20 +432,36 @@ class X0InvariantStress(_IExtensionBase):
             if item is not None:
                 yield item
 
-        base_addr = self.tibbar.allocate_data(8, align=8)
+        load_mnemonics = []
+        for mnemonic in self.tibbar.eumos.instructions_by_group("memory/load"):
+            instr = self.tibbar.instrs.get(mnemonic)
+            if instr is None:
+                continue
+            operands = getattr(instr, "operands", {})
+            if hasattr(operands, "keys"):
+                operand_names = set(operands.keys())
+            else:
+                operand_names = {getattr(operand, "name", operand) for operand in operands}
+            if {"rd", "rs1", "imm"}.issubset(operand_names):
+                load_mnemonics.append(mnemonic)
+        if not load_mnemonics:
+            return
+        self.tibbar.random.shuffle(load_mnemonics)
+        base_addr = self.tibbar.allocate_data(8 * len(load_mnemonics), align=8)
         if base_addr is None:
             return
         yield from self._load_gpr(3, base_addr)
-        for mnemonic in ("lb", "lh", "lw", "ld"):
+        for idx, mnemonic in enumerate(load_mnemonics):
+            offset = idx * 8
             item = self._emit(
                 mnemonic,
                 comment=f"{mnemonic} -> x0",
                 rd=0,
                 rs1=3,
-                imm=0,
+                imm=offset,
             )
             if item is not None:
-                item.ldst_addr = base_addr
+                item.ldst_addr = base_addr + offset
                 item.ldst_data = 0xFFFF_FFFF_FFFF_FFFF
                 item.ldst_size = 8
                 yield item
