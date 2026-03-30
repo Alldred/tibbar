@@ -5,6 +5,11 @@
 
 from __future__ import annotations
 
+import pytest
+from eumos import Eumos
+from eumos.instance import InstructionInstance
+from lome import Lome
+
 from tibbar.core.tibbar import Tibbar
 from tibbar.sequences.random_instrs import RandomFloatInstrs, RandomSafeInstrs
 
@@ -51,6 +56,60 @@ def test_random_safe_instrs_emits_requested_count_without_decode_rejection(monke
         inst = original_from_opc(int(g.data) & 0xFFFF_FFFF)
         assert inst is not None
         assert inst.instruction.mnemonic in seq._i_only
+
+
+def test_random_safe_instrs_can_emit_czero(monkeypatch) -> None:
+    tibbar = _make_tibbar()
+    seq = RandomSafeInstrs(tibbar, length=2)
+    assert {"czero.eqz", "czero.nez"}.issubset(set(seq._i_only))
+
+    original_choice = seq.random.choice
+    forced = iter(["czero.eqz", "czero.nez"])
+
+    def forced_choice(population):
+        if population is seq._i_only:
+            try:
+                return next(forced)
+            except StopIteration:
+                return original_choice(population)
+        return original_choice(population)
+
+    monkeypatch.setattr(seq.random, "choice", forced_choice)
+
+    out = list(seq.gen())
+    emitted = [g for g in out if getattr(g, "seq", None) == seq.name]
+    assert len(emitted) == 2
+
+    decoded = [tibbar.decoder.from_opc(int(g.data) & 0xFFFF_FFFF) for g in emitted]
+    assert all(inst is not None for inst in decoded)
+    assert [inst.instruction.mnemonic for inst in decoded] == ["czero.eqz", "czero.nez"]
+
+
+@pytest.mark.parametrize(
+    ("mnemonic", "rs2", "expected"),
+    [
+        ("czero.eqz", 0, 0),
+        ("czero.eqz", 7, 0x1234),
+        ("czero.nez", 0, 0x1234),
+        ("czero.nez", 7, 0),
+    ],
+)
+def test_lome_executes_czero_semantics(mnemonic: str, rs2: int, expected: int) -> None:
+    eumos = Eumos()
+    model = Lome(eumos)
+    model.reset()
+    model.set_gpr(1, 0x1234)
+    model.set_gpr(2, rs2)
+    model.set_gpr(3, 0xDEAD)
+
+    opc = InstructionInstance(
+        instruction=eumos.instructions[mnemonic],
+        operand_values={"rd": 3, "rs1": 1, "rs2": 2},
+    ).to_opc()
+    model.execute(opc)
+
+    assert model.get_gpr(3) == expected
+    assert model.get_pc() == 4
 
 
 def test_random_float_instrs_emits_requested_count(monkeypatch) -> None:

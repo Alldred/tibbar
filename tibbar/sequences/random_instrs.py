@@ -19,7 +19,9 @@ class RandomInstrs(BaseConstraint):
         self.length = length
         self.name = self.__class__.__name__
         self._i_only = [
-            n for n, instr in tibbar.instrs.items() if getattr(instr, "extension", "") == "I"
+            n
+            for n, instr in tibbar.instrs.items()
+            if getattr(instr, "extension", "") in {"I", "Zicond"}
         ]
         if not self._i_only:
             self._i_only = list(tibbar.instrs.keys())
