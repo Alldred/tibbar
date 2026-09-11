@@ -12,7 +12,7 @@ dependencies = [
     "eumos",
     "jsonschema",
     "lome",
-    "compwa-python-constraint==1.4.0.post1",
+    "python-constraint2>=2.7",
     "pre-commit",
     "pykwalify",
     "PyYAML",
