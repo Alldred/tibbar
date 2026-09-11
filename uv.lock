@@ -30,6 +30,15 @@ wheels = [
 ]
 
 [[package]]
+name = "compwa-python-constraint"
+version = "1.4.0.post1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/0b/773cd834c82d7822167983de32a070f9099c091980818e8327722a067eff/compwa_python_constraint-1.4.0.post1.tar.gz", hash = "sha256:dea00720a05debce39f6e4f384ad04b6b9235c316d1b984a4ee543e8c6952f45", size = 21314, upload-time = "2026-07-30T14:38:00.002Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/b2/257f9852d18fdaccdced2ff741efb82bf9ac18aecdad75696d5910eec5f1/compwa_python_constraint-1.4.0.post1-py3-none-any.whl", hash = "sha256:adddd14897a0da511b7eb89be9a7081ac2ecfb41867a3d78e16f89a6eac2b5f9", size = 25267, upload-time = "2026-07-30T14:37:58.86Z" },
+]
+
+[[package]]
 name = "coverage"
 version = "7.13.4"
 source = { registry = "https://pypi.org/simple" }
@@ -291,12 +300,6 @@ wheels = [
 ]
 
 [[package]]
-name = "python-constraint"
-version = "1.4.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/37/8b/5f1bc2734ca611943e1d6733ee244238679f6410a10cd45ede55a61a8402/python-constraint-1.4.0.tar.bz2", hash = "sha256:501d6f17afe0032dfc6ea6c0f8acc12e44f992733f00e8538961031ef27ccb8e", size = 18416, upload-time = "2018-11-05T09:02:44.334Z" }
-
-[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = "https://pypi.org/simple" }
@@ -459,12 +462,12 @@ name = "tibbar"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "compwa-python-constraint" },
     { name = "eumos" },
     { name = "jsonschema" },
     { name = "lome" },
     { name = "pre-commit" },
     { name = "pykwalify" },
-    { name = "python-constraint" },
     { name = "pyyaml" },
 ]
 
@@ -476,6 +479,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "compwa-python-constraint", specifier = "==1.4.0.post1" },
     { name = "eumos", git = "https://github.com/Alldred/eumos.git" },
     { name = "jsonschema" },
     { name = "lome", git = "https://github.com/Alldred/lome.git" },
@@ -483,7 +487,6 @@ requires-dist = [
     { name = "pykwalify" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
-    { name = "python-constraint" },
     { name = "pyyaml" },
 ]
 provides-extras = ["dev"]
