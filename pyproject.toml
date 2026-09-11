@@ -12,7 +12,7 @@ dependencies = [
     "eumos",
     "jsonschema",
     "lome",
-    "python-constraint",
+    "python-constraint2>=2.7",
     "pre-commit",
     "pykwalify",
     "PyYAML",
