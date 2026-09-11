@@ -26,8 +26,8 @@ requires-python = ">= 3.13"
 tibbar = "tibbar.__main__:main"
 
 [tool.uv.sources]
-eumos = { git = "ssh://git@github.com/Alldred/eumos.git" }
-lome = { git = "ssh://git@github.com/Alldred/lome.git" }
+eumos = { git = "https://github.com/Alldred/eumos.git" }
+lome = { git = "https://github.com/Alldred/lome.git" }
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov"]
